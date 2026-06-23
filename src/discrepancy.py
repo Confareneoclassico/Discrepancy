@@ -1803,7 +1803,7 @@ if __name__ == "__main__":
 
 
     # ── Joint convergence grid plot across all benchmarks ───────────
-    plot_convergence_grid(conv_dict, filename="convergence_all.pdf")
+    plot_convergence_grid(conv_dict, filename="../results/figures/convergence_all.pdf")
 
     # ── Becker metafunction study ────────────────────────────────────
     # Compares all four estimators over the full hyperparameter space.
@@ -1891,7 +1891,7 @@ if __name__ == "__main__":
         ax.tick_params(labelsize=9)
     plt.suptitle("Becker metafunction: five estimators compared", fontsize=13)
     plt.tight_layout()
-    plt.savefig("becker_boxplots.pdf", dpi=300)
+    plt.savefig("../results/figures/becker_boxplots.pdf", dpi=300)
     print("  Saved becker_boxplots.pdf")
 
 
@@ -1936,7 +1936,7 @@ if __name__ == "__main__":
                         fontsize=9,
                         color="white" if v > 0.5 else "black")
     plt.tight_layout()
-    plt.savefig("sos_heatmap.pdf", dpi=300)
+    plt.savefig("../results/figures/sos_heatmap.pdf", dpi=300)
     print("  Saved sos_heatmap.pdf")
 
     # ── Barplot: which SoS parameter matters most, averaged across outputs ──
