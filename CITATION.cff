@@ -1,0 +1,64 @@
+# PLACEHOLDER — Citation File Format (CFF) metadata.
+# This file is incomplete. Fill in the bracketed PLACEHOLDER fields once the
+# manuscript is finalised, then validate at https://citation-file-format.github.io/cff-initializer-javascript/
+cff-version: 1.2.0
+message: "If you use this software or the accompanying manuscript, please cite both as below."
+title: "Improving Discrepancy Measures for Global Sensitivity Analysis"
+version: "0.1.0-preprint" 
+date-released: "2026-06-30"
+repository-code: "https://github.com/Confareneoclassico/Discrepancy"
+license: MIT  # e.g. MIT, CC-BY-4.0 — see LICENSE file
+authors:
+  # PLACEHOLDER — the manuscript's "Authors' contributions" section credits initials
+  # "A.L." as lead author/conceptualiser, which does not unambiguously match any name
+  # in this CFF file. Please confirm and replace before publishing.
+  - family-names: "Lo Piano"
+    given-names: "Samuele"
+    affiliation: "Gdansk University of Technology"
+    orcid: "https://orcid.org/0000-0002-2625-483X"
+  - family-names: "Lachi"
+    given-names: "Alessio"
+    affiliation: "Saint Camillus International University of Health and Medical Sciences"
+    orcid: "https://orcid.org/0000-0002-0764-0866"  
+  - family-names: "Sheikholeslami"
+    given-names: "Razi"
+    affiliation: "Department of Civil Engineering, Sharif University of Technology"
+    orcid: "https://orcid.org/0000-0001-8004-1985"
+  - family-names: "Puy"
+    given-names: "Arnald"
+    affiliation: "School of Geography, Earth and Environmental Sciences, University of Birmingham"
+    orcid: "https://orcid.org/0000-0001-9469-2156"
+  - family-names: "Roy"
+    given-names: "Pamphile Tupui"
+    affiliation: "Consulting Manao, Vienna"
+    orcid: "https://orcid.org/0000-0001-9816-1416"
+  - family-names: "Saltelli"
+    given-names: "Andrea"
+    affiliation: "Barcelona School of Management, Pompeu Fabra University"
+    orcid: "https://orcid.org/0000-0003-4222-6975"
+# preferred-citation:
+#   type: article
+#   title: "PLACEHOLDER — Improving Discrepancy Measures for Global Sensitivity Analysis"
+#   authors:
+#     - family-names: "PLACEHOLDER"
+#       given-names: "PLACEHOLDER"
+#   journal: "PLACEHOLDER — target journal name"
+#   year: PLACEHOLDER
+#   doi: "PLACEHOLDER — 10.xxxx/xxxxx"
+references:
+  - type: article
+    title: "Discrepancy Measures for Global Sensitivity Analysis"
+    authors:
+      - family-names: "Puy"
+        given-names: "Arnald"
+      - family-names: "Roy"
+        given-names: "Pamphile T."
+      - family-names: "Saltelli"
+        given-names: "Andrea"
+    journal: "Technometrics"
+    volume: "66"
+    issue: "3"
+    start: "347"
+    end: "357"
+    year: 2024
+    doi: "10.1080/00401706.2024.2304341"

@@ -1,0 +1,18 @@
+# PLACEHOLDER — conda alternative to requirements.txt; not yet tested by the author
+# team (this file was generated from the same version pins as requirements.txt,
+# converted to conda/pip syntax, but a `conda env create` run has not been verified).
+
+# Usage (once verified):
+#   conda env create -f environment.yml
+#   conda activate ersatz-discrepancy
+name: ersatz-discrepancy
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy>=1.26
+  - pandas>=2.0
+  - scipy>=1.11
+  - matplotlib>=3.7,<3.9
+  - pip
+  - chaospy

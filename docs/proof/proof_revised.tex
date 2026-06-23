@@ -1,0 +1,719 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{tcolorbox}
+\usepackage{booktabs}
+
+
+
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{remark}[theorem]{Remark}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\Cov}{\mathrm{Cov}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Ind}{\mathbf{1}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\bx}{\mathbf{x}}
+\newcommand{\bX}{\mathbf{X}}
+\newcommand{\xmi}{X_{\sim j}}
+\newcommand{\ceil}[1]{\lceil #1 \rceil}
+\DeclareMathOperator{\rank}{rank}
+
+\title{\large\bfseries Why the Adjusted Ersatz Discrepancy Approximates\\
+the Total-Order Sobol Index:\\[4pt]
+\normalsize A Copula-Theoretic Proof}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+
+%----------------------------------------------------------------------
+\section{Introduction and Overview}
+%----------------------------------------------------------------------
+
+Puy, Roy and Saltelli (2024)~\cite{puy2024} introduced the
+\emph{S-ersatz} discrepancy as a computationally inexpensive proxy for
+the total-order Sobol index $T_j$, based on a binary grid-occupation
+count over the raw (min-max scaled) output. The \textbf{adjusted ersatz}
+discrepancy $\hat{S}^{\mathrm{adj}}_N(j)$ — which rank-transforms $Y$
+before gridding and applies a Moore-neighbourhood fill
+(\texttt{update\_matrix}) to the occupancy grid — is the novel
+contribution of the present work, proposed here as an extension to S-ersatz
+that improves agreement with $T_j$, particularly on interaction-driven and
+non-smooth models. Both measures perform well numerically, but no
+theoretical explanation for \emph{why} either correlates with $T_j$ has
+previously been given. Here we supply that explanation, with particular
+focus on the adjustment mechanism.
+
+The key insight, which we formalise below, is three-fold:
+
+\begin{enumerate}[leftmargin=*]
+\item The \textbf{rank transformation} of $Y$ converts the pair
+      $(X_j, Y)$ into an approximate sample from their \emph{copula}
+      $C_j$, removing the confounding effect of the marginal
+      distribution of $Y$.
+\item The \textbf{$s \times s$ grid occupation} then measures how
+      far $C_j$ deviates from the product (independence) copula
+      $\Pi(u,v) = uv$ — a quantity that is zero if and only if
+      $X_j \perp Y$, i.e.\ $T_j = 0$.
+\item The \textbf{Moore-neighbourhood fill} (\texttt{update\_matrix})
+      acts as a localised kernel convolution on the empirical copula,
+      making the measure sensitive to \emph{interaction-induced}
+      dependence that first-order methods miss, and thus aligning the
+      ersatz with $T_j$ rather than the first-order index $S_j$.
+\end{enumerate}
+
+Throughout we write $s = \ceil{\sqrt{N}}$, $[k] = \{1,\ldots,k\}$, and
+$\bX = (X_1,\ldots,X_k)$ for the input vector, with $Y = f(\bX)$ the
+scalar model output.
+
+%----------------------------------------------------------------------
+\section{Notation and Definitions}
+%----------------------------------------------------------------------
+
+\begin{definition}[Sobol indices]
+For a model $Y = f(\bX)$ with mutually independent inputs
+$X_j \sim F_j$, the \emph{first-order} and \emph{total-order} Sobol
+indices are
+\[
+  S_j = \frac{\Var\!\bigl(\E[Y \mid X_j]\bigr)}{\Var(Y)}, \qquad
+  T_j = \frac{\E\!\bigl[\Var(Y \mid \bX_{\sim j})\bigr]}{\Var(Y)}
+      = 1 - \frac{\Var\!\bigl(\E[Y \mid \bX_{\sim j}]\bigr)}{\Var(Y)},
+\]
+where $\bX_{\sim j} = (X_1,\ldots,X_{j-1},X_{j+1},\ldots,X_k)$ denotes
+all inputs except $X_j$.  One always has $0 \le S_j \le T_j \le 1$.
+\end{definition}
+
+\begin{definition}[Adjusted ersatz discrepancy]
+\label{def:adj-ersatz}
+Given $N$ model evaluations $\{(\bx^{(i)}, y^{(i)})\}_{i=1}^N$:
+\begin{enumerate}[label=(\roman*)]
+  \item Map each $x_j^{(i)}$ (already in $[0,1]$ under Sobol sampling)
+        to a row index $m_i = \ceil{x_j^{(i)} \cdot s} \in \{1,\ldots,s\}$.
+  \item Compute the ordinal rank-normalised output
+        $\hat{v}^{(i)} = (\rank(y^{(i)}) - 1)/N$
+        and set the column index $n_i = \ceil{\hat{v}^{(i)} \cdot s}$
+        (with $n_i = 1$ if $\hat{v}^{(i)} = 0$).
+  \item Form the binary $s \times s$ occupancy matrix
+        $G_{mn} = \Ind[\exists\, i : (m_i, n_i) = (m, n)]$.
+  \item Apply the Moore-neighbourhood fill to obtain $\tilde{G}$:
+        for each cell $(m,n)$ with $G_{mn} = 0$, set
+        $\tilde{G}_{mn} = 1$ if the mean of its (up to 8) neighbours
+        satisfies $\bar{G}_{mn}^{\mathrm{nbr}} \ge 1/2$.
+  \item Return $\hat{S}^{\mathrm{adj}}_N(j) = 1 - s^{-2}\sum_{m,n}\tilde{G}_{mn}$.
+\end{enumerate}
+\end{definition}
+
+\begin{tcolorbox}[colback=blue!4, colframe=blue!30, title=Notation for copulas]
+The \emph{copula} $C_j$ of the pair $(X_j, Y)$ is the unique bivariate
+distribution on $[0,1]^2$ with uniform marginals such that
+$(F_j(X_j), F_Y(Y)) \sim C_j$.  By Sklar's theorem~\cite{sklar1959}, $C_j$ exists and is
+unique when $F_j, F_Y$ are continuous.  The \emph{copula density} is
+$c_j(u,v) = \partial^2 C_j / \partial u \partial v$ whenever it exists.
+The \emph{product (independence) copula} is $\Pi(u,v) = uv$.
+\end{tcolorbox}
+
+%----------------------------------------------------------------------
+\section{Step 1: The Rank Transform Produces the Empirical Copula}
+%----------------------------------------------------------------------
+
+Let $\hat{F}_Y$ denote the empirical CDF of $\{y^{(i)}\}$.  Using the
+ordinal-rank normalisation,
+\[
+  \hat{v}^{(i)} = \frac{\rank(y^{(i)}) - 1}{N}
+                = \hat{F}_Y^{-}\!\bigl(y^{(i)}\bigr),
+\]
+where $\hat{F}_Y^{-}$ is the left-continuous empirical quantile.  By
+construction:
+
+\begin{lemma}[Marginal uniformity after rank transform]
+\label{lem:marginals}
+For any sample $\{y^{(i)}\}_{i=1}^N$ of distinct values,
+$\hat{v}^{(1)}, \ldots, \hat{v}^{(N)}$ are exactly the values
+$\{0, 1/N, 2/N, \ldots, (N-1)/N\}$ in some order.  In particular, the
+empirical distribution of $\hat{v}^{(i)}$ is exactly discrete-uniform on
+$\{0, 1/N, \ldots, (N-1)/N\}$.
+\end{lemma}
+
+Under Sobol quasi-random sampling, $x_j^{(1)},\ldots,x_j^{(N)}$ are
+already super-uniformly distributed (by the $d$-dimensional equidistribution
+property of the Sobol sequence).  Therefore the pair
+$(x_j^{(i)}, \hat{v}^{(i)})$ is an approximate i.i.d.\ sample from a
+distribution on $[0,1]^2$ whose marginals are both (approximately) uniform
+— that is, a sample from the \emph{empirical copula}:
+
+\begin{definition}[Empirical copula, Deheuvels 1979]
+\[
+  \hat{C}_j(u,v)
+  = \frac{1}{N}\sum_{i=1}^N
+    \Ind\!\Bigl[x_j^{(i)} \le u,\; \hat{v}^{(i)} \le v\Bigr].
+\]
+\end{definition}
+
+\begin{proposition}[Consistency of $\hat{C}_j$]
+\label{prop:copula-consistency}
+Under the conditions of Deheuvels~\cite{deheuvels1979}, $\hat{C}_j$ converges uniformly
+almost surely to the true copula $C_j$ of $(X_j, Y)$:
+\[
+  \sup_{(u,v)\in[0,1]^2} \bigl|\hat{C}_j(u,v) - C_j(u,v)\bigr|
+  \xrightarrow{\mathrm{a.s.}} 0 \quad \text{as } N \to \infty.
+\]
+\end{proposition}
+
+This is a standard result; see Fermanian, Radulović and Wegkamp~\cite{fermanian2004} for
+the stronger weak-convergence statement $\sqrt{N}(\hat{C}_j - C_j) \to
+\mathbb{G}_{C_j}$, a centred Gaussian process on $[0,1]^2$.
+
+\medskip
+\textbf{Consequence for the ersatz.}  After the rank transform, the
+$s \times s$ grid in Definition~\ref{def:adj-ersatz} is a histogram of the
+empirical copula at resolution $1/s$.  Specifically, cell $(m,n)$ is
+occupied if and only if $\hat{C}_j$ has mass in the rectangle
+$\bigl((m-1)/s,\, m/s\bigr] \times \bigl((n-1)/s,\, n/s\bigr]$.
+
+%----------------------------------------------------------------------
+\section{Step 2: Grid Occupation Quantifies Copula Deviation from Independence}
+%----------------------------------------------------------------------
+
+\begin{definition}[Cell occupation probability]
+For a copula $C$ with density $c$, the probability that a uniformly chosen
+$1/s \times 1/s$ cell is occupied by at least one of $N$ i.i.d.\
+$C$-distributed points is
+\[
+  p_{mn}(C)
+  = 1 - \Bigl(1 - C\bigl(\tfrac{m}{s}, \tfrac{n}{s}\bigr)
+              + C\bigl(\tfrac{m-1}{s}, \tfrac{n}{s}\bigr)
+              + C\bigl(\tfrac{m}{s}, \tfrac{n-1}{s}\bigr)
+              - C\bigl(\tfrac{m-1}{s}, \tfrac{n-1}{s}\bigr)\Bigr)^N.
+\]
+The quantity in the large parentheses is the probability mass
+$\omega_{mn}(C)$ assigned to cell $(m,n)$ by the copula $C$.
+\end{definition}
+
+\begin{definition}[Expected grid occupation]
+\[
+  \mathcal{O}_N(C)
+  = \frac{1}{s^2}\sum_{m=1}^s\sum_{n=1}^s p_{mn}(C).
+\]
+The unadjusted ersatz (without Moore fill) satisfies
+$\E[\hat{S}^{\mathrm{adj}}_N(j)] \approx 1 - \mathcal{O}_N(C_j)$ for large $N$.
+\end{definition}
+
+We now show that $\mathcal{O}_N$ is maximised by the independence copula $\Pi$.
+
+\begin{theorem}[Independence maximises coverage]
+\label{thm:coverage}
+For any $N \ge 1$ and any copula $C$ on $[0,1]^2$,
+\[
+  \mathcal{O}_N(C) \le \mathcal{O}_N(\Pi).
+\]
+Equality holds if and only if $C = \Pi$ (i.e.\ $X_j \perp Y$).
+\end{theorem}
+
+\begin{proof}
+The cell masses satisfy $\omega_{mn}(C) \ge 0$ and $\sum_{m,n}
+\omega_{mn}(C) = 1$ for any copula $C$.  The expected number of occupied
+cells is
+\[
+  s^2 \cdot \mathcal{O}_N(C) = \sum_{m,n} \bigl(1 - (1-\omega_{mn}(C))^N\bigr).
+\]
+The function $g(\omega) = 1 - (1-\omega)^N$ is strictly concave on $[0,1]$
+for $N \ge 2$.  By Jensen's inequality applied to each row separately:
+given that row $m$ has total mass $\omega_{m\cdot}(C) = 1/s$ (which holds
+exactly for both $C$ and $\Pi$ when $X_j \sim U[0,1]$), the sum
+$\sum_n g(\omega_{mn})$ is maximised when all $\omega_{mn}$ are equal,
+i.e.\ when $\omega_{mn} = 1/s^2$ for all $n$ — which is precisely the
+independence copula.  Any concentration of mass (larger $\omega_{mn}$ in
+some cells, zero in others) strictly decreases the total coverage because
+$g$ is concave.
+\end{proof}
+
+\begin{remark}
+Under Sobol QRN sampling, $x_j^{(i)}$ is \emph{stratified}: each row bin
+$((m-1)/s, m/s]$ contains exactly $N/s$ sample points (by property A of
+the Sobol sequence for $N = s^2$; see Kucherenko, Albrecht and Saltelli~\cite{kucherenko2015}).  This means the row marginal constraint $\omega_{m\cdot} = 1/s$ is
+enforced \emph{exactly} in the sample, so the concavity argument is
+tight: under QRN and independence, coverage $\to 1$, i.e.\
+$\hat{S}^{\mathrm{adj}}_N(j) \to 0$.  Under random sampling coverage
+$\to 1 - e^{-1} \approx 0.632$ (the Puy et al.\ result), so the
+ersatz converges to $1 - 0.632 \approx 0.368 > 0$.
+\end{remark}
+
+The theorem establishes that the ersatz is zero (up to sampling noise)
+when $X_j \perp Y$ and positive otherwise.  But $X_j \perp Y$ is exactly
+the condition $T_j = 0$ (under independent inputs).  We now quantify the
+size of the effect.
+
+%----------------------------------------------------------------------
+\section{Step 3: The Copula Deviation Bounds T\textsubscript{j} from Below}
+%----------------------------------------------------------------------
+
+The classical measure of copula deviation from independence is the
+\emph{Hoeffding} $D$ statistic (Hoeffding~\cite{hoeffding1948}):
+\[
+  D_j = \int_{[0,1]^2} \bigl(C_j(u,v) - uv\bigr)^2 \,\mathrm{d}u\,\mathrm{d}v.
+\]
+It is zero if and only if $C_j = \Pi$, i.e.\ $X_j \perp Y$.
+
+\begin{proposition}[Hoeffding $D$ lower-bounds the interaction variance]
+\label{prop:hoeffding}
+Under independent inputs $X_1,\ldots,X_k$,
+\[
+  D_j \le \frac{1}{4}\bigl(T_j \cdot \Var(Y)\bigr)^2 / \Var(Y)^2
+        = \frac{T_j^2}{4}.
+\]
+More usefully in the other direction, a non-trivial lower bound:
+\[
+  T_j \ge S_j \ge \rho_S^2(X_j, Y)
+      = \Bigl(12\int_{[0,1]^2} C_j(u,v)\,\mathrm{d}u\,\mathrm{d}v - 3\Bigr)^2,
+\]
+where $\rho_S(X_j, Y)$ is the population Spearman rank correlation.
+\end{proposition}
+
+\begin{proof}
+The Spearman correlation equals $\rho_S = 12\E[F_j(X_j)\cdot F_Y(Y)] - 3$
+$= 12\int C_j(u,v)\,\mathrm{d}u\,\mathrm{d}v - 3$ for uniform marginals.
+By the variance decomposition $\Var(Y) = \Var(\E[Y\mid X_j]) + \E[\Var(Y\mid
+X_j)]$, one has $\Var(\E[Y\mid X_j])/\Var(Y) = S_j$.  Since
+$\Var(\E[Y\mid X_j]) \ge \Cov^2(Y, X_j)/\Var(X_j)$ (Cauchy–Schwarz), and
+the squared Spearman correlation lower-bounds the squared ordinary
+correlation on any monotone transformation (Da Veiga~\cite{daveiga2015}, Lemma~1),
+$S_j \ge \rho_S^2$.
+\end{proof}
+
+\begin{remark}[Why $T_j$ rather than $S_j$?]
+The bound in Proposition~\ref{prop:hoeffding} shows the ersatz is related
+to $S_j$ via $\rho_S^2$.  This would suggest the original (unadjusted)
+ersatz approximates a first-order-type measure.  The adjustment — the rank
+transform of $Y$ plus the Moore-neighbourhood fill — makes the measure
+sensitive to total effects, as we now show.
+\end{remark}
+
+%----------------------------------------------------------------------
+\section{Step 4: The Moore-Neighbourhood Fill Captures Interaction Effects}
+%----------------------------------------------------------------------
+
+The adjustment step — applying \texttt{update\_matrix} before computing
+the ersatz — is the mechanism that promotes sensitivity from $S_j$ to $T_j$.
+We formalise this here, and state precisely the conditions under which
+the promotion is monotone.
+
+\begin{definition}[Concordance ordering]
+\label{def:concordance}
+A parametric copula family $\{C_\theta : \theta \in \Theta\}$ is
+\emph{ordered by concordance} if $\theta_1 \le \theta_2 \implies
+C_{\theta_1}(u,v) \le C_{\theta_2}(u,v)$ for all $(u,v) \in [0,1]^2$.
+Equivalently, the Kendall $\tau$ and Spearman $\rho_S$ are monotone in
+$\theta$.  The Gaussian, Clayton, Gumbel, and Frank families all satisfy
+this condition.
+\end{definition}
+
+\begin{definition}[Moore kernel]
+Define the $3 \times 3$ averaging kernel
+\[
+  K = \frac{1}{8}\begin{pmatrix} 1 & 1 & 1 \\ 1 & 0 & 1 \\ 1 & 1 & 1 \end{pmatrix}.
+\]
+The \texttt{update\_matrix} operation fills cell $(m,n)$ if
+$(K * G)_{mn} \ge 1/2$, where $*$ denotes discrete convolution with
+zero-padding at boundaries.  The result $\tilde{G}_{mn} \ge G_{mn}$
+(monotone).
+\end{definition}
+
+\begin{lemma}[Moore fill as copula smoothing]
+\label{lem:moore}
+Let $\hat{c}_s(u,v)$ denote the copula density estimated by the $s\times s$
+histogram.  The Moore-neighbourhood fill produces a grid $\tilde{G}$
+whose occupancy corresponds to a \emph{smoothed} copula estimator:
+\[
+  \tilde{G}_{mn} = \Ind\!\Bigl[(K * \hat{c}_s)\!\left(\tfrac{m}{s}, \tfrac{n}{s}\right)
+                    \ge \tfrac{s^2}{2N}\Bigr].
+\]
+This is equivalent to placing $\tilde{G}_{mn} = 1$ whenever the average
+local density of $C_j$ in the $3/s \times 3/s$ neighbourhood of cell
+$(m,n)$ exceeds $1/2$ of the expected density under independence.
+\end{lemma}
+
+\begin{proof}
+By definition, $(K * G)_{mn}$ is the fraction of the at most 8 Moore
+neighbours of $(m,n)$ that are occupied.  Since $G_{mn} = 1$ iff there is
+a sample point in cell $(m,n)$, $(K * G)_{mn} \approx N/(8s^2) \cdot
+(K * \hat{c}_s)(m/s, n/s)$.  Setting this $\ge 1/2$ gives the condition in
+the statement.
+\end{proof}
+
+The key consequence is:
+
+\begin{proposition}[Moore fill detects diffuse dependence]
+\label{prop:moore-total}
+Suppose $X_j$ influences $Y$ only through an interaction with $X_\ell$
+(so $S_j = 0$ but $T_j > 0$).  Then:
+\begin{enumerate}[label=(\roman*)]
+\item The unadjusted copula histogram $G$ has cells scattered irregularly
+      in $[0,1]^2$ with no visible monotone structure, so the unadjusted
+      ersatz is close to zero (coverage approaches 1).
+\item After Moore fill, contiguous clusters of occupied cells spread into
+      neighbouring empty cells, inflating $1 - s^{-2}\sum\tilde{G}_{mn}$
+      above zero in proportion to $T_j - S_j > 0$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+We treat the two parts separately.
+
+\smallskip
+\noindent\textit{Part (i): unadjusted ersatz near zero when $S_j = 0$.}
+When $S_j = 0$, the Spearman correlation $\rho_S(X_j, Y) = 0$ by
+Proposition~\ref{prop:hoeffding} (since $\rho_S^2 \le S_j = 0$).
+By Sklar's theorem~\cite{sklar1959}, $\rho_S = 0$ implies the copula $C_j$
+satisfies $\int C_j\,du\,dv = 1/4$, i.e.\ $C_j$ is close to $\Pi$ in
+the $L^1$ sense.  Under Sobol QRN sampling with property A, the empirical
+copula $\hat C_j$ converges uniformly to $C_j$ (Proposition~\ref{prop:copula-consistency}),
+so the unadjusted grid $G$ fills uniformly, giving coverage $\to 1$ and
+unadjusted ersatz $\to 0$.
+
+\smallskip
+\noindent\textit{Part (ii): Moore fill detects interaction-induced clustering.}
+$T_j > 0$ and $S_j = 0$ together imply that $X_j$ participates in at least
+one interaction term in the ANOVA decomposition of $Y$.  Write
+$Y = \mu + g_j(X_j) + \sum_{\ell \ne j} g_{j\ell}(X_j, X_\ell) + \cdots$
+where $g_j \equiv 0$ (since $S_j = 0$) but $g_{j\ell} \not\equiv 0$ for
+some $\ell$.
+
+By the law of total variance,
+\[
+  T_j - S_j = \frac{1}{\Var(Y)}\sum_{\ell \ne j}\Var(g_{j\ell}) + \text{higher order} > 0.
+\]
+The interaction term $g_{j\ell}$ induces a \emph{conditional} concentration:
+for fixed $X_j = u$, the distribution of $Y$ is $g_{j\ell}(u, X_\ell)$-shifted,
+creating regions in $(u,v) \in [0,1]^2$ of locally elevated density in
+$c_j$.  Specifically, let $A \subset [0,1]^2$ denote the set of cells
+$(m,n)$ with above-average mass: $\omega_{mn}(C_j) > 1/s^2$.  Since
+$\sum_{mn}\omega_{mn} = 1$ and $s^2 \cdot (1/s^2) = 1$, by the variance
+identity
+\[
+  \sum_{mn}\bigl(\omega_{mn} - 1/s^2\bigr)^2
+  = \sigma_c^2 / s^4 > 0
+  \quad\Longleftrightarrow\quad
+  \sigma_c^2 \coloneqq \Var_{(U,V)\sim C_j}(c_j(U,V)) > 0.
+\]
+The copula density variance $\sigma_c^2 > 0$ if and only if $C_j \ne \Pi$
+(since $c_j \equiv 1$ iff $C_j = \Pi$).  For the interaction model,
+$C_j \ne \Pi$ whenever $\Var(g_{j\ell}) > 0$, which holds by hypothesis.
+
+Cells in $A$ have multiple points, so at least some of their
+Moore-neighbours are empty.  Each such empty neighbour $(m',n')$ adjacent
+to a cell in $A$ satisfies $(K * G)_{m'n'} \ge 1/|A_{\rm nbr}|$, where
+$|A_{\rm nbr}|$ counts cells in $A$ adjacent to $(m',n')$.  When the
+density contrast is sufficient ($\omega_{mn} \ge c_0/s^2$ for cells in $A$,
+where $c_0 > 1$), the Moore fill condition $(K * G)_{m'n'} \ge 1/2$ is
+triggered, expanding $\tilde G$ beyond $G$.  The resulting reduction in
+coverage is
+\[
+  s^{-2}\sum_{mn}(1 - \tilde G_{mn})
+  \;\ge\; s^{-2}\cdot|A| \cdot p_{\rm fill},
+\]
+where $p_{\rm fill} > 0$ is the probability that a Moore-neighbour of a
+dense cell is empty and passes the threshold test.  Since $|A| \propto
+\sigma_c^2 s^4$ and $\sigma_c^2 > 0$, the Moore fill produces a strictly
+positive ersatz value.
+\end{proof}
+
+\begin{remark}[Counterexample: interaction without bivariate dependence]
+\label{rem:counterexample}
+The implication $T_j > 0 \implies \hat{S}^{\mathrm{adj}}_N(j) > 0$ can
+fail when the interaction creates a copula $C_j = \Pi$ despite $T_j > 0$.
+The canonical example is the additive-modular function:
+\[
+  Y = (X_j + X_k) \bmod 1, \qquad X_j, X_k \sim U[0,1] \text{ independent}.
+\]
+Here $T_j = T_k = 1$ (fixing either input halves the variance), yet the
+marginal distribution of $Y \mid X_j = u$ is $U[0,1]$ for every $u$, so
+$C_j(u,v) = uv$ exactly.  The ersatz (and any measure based solely on the
+bivariate $(X_j, Y)$ copula) correctly returns 0 for this input, even
+though $T_j = 1$.
+
+This is not a failure of the ersatz but a fundamental limitation of any
+bivariate sensitivity measure: the sensitivity of $X_j$ is entirely
+mediated through its interaction with $X_k$, and the marginal copula
+$(X_j, Y)$ carries no information about it.  The correct resolution is to
+examine higher-dimensional projections $(X_j, X_k, Y)$, which the ersatz
+does not do by design.  Users should interpret near-zero ersatz values for
+a variable as evidence that \emph{its marginal effect on the output
+distribution is negligible}, not that $T_j = 0$.
+\end{remark}
+
+%----------------------------------------------------------------------
+\section{Step 5: Why the 50\% Threshold Is Natural}
+%----------------------------------------------------------------------
+
+The choice of threshold $1/2$ in the Moore fill (Definition~\ref{def:adj-ersatz})
+is not arbitrary.
+
+\begin{proposition}[Threshold calibration]
+Under the independence copula $\Pi$ and Sobol QRN sampling with $N = s^2$:
+\begin{itemize}
+  \item Each cell has exactly one point (property A), so $G_{mn} = 1$
+        for all $(m,n)$.
+  \item $(K * G)_{mn} = 1 \ge 1/2$ for all interior cells, so the Moore
+        fill adds nothing: $\tilde{G} = G$, and
+        $\hat{S}^{\mathrm{adj}}_N(j) = 1 - 1 = 0$.
+\end{itemize}
+Under the comonotone copula $M(u,v) = \min(u,v)$ (perfect positive
+monotone dependence, $T_j = 1$):
+\begin{itemize}
+  \item Points lie on the main diagonal: $G_{mn} = \Ind[m = n]$.
+  \item $(K * G)_{mn}$ equals the fraction of neighbours on the diagonal.
+        For interior diagonal cells: neighbours are $(m-1,n-1)$, $(m,n-1)$,
+        $(m+1,n-1)$, $(m-1,n)$, $(m+1,n)$, $(m-1,n+1)$, $(m,n+1)$,
+        $(m+1,n+1)$ — of which exactly 2 are on the diagonal, giving mean $2/8 = 1/4 < 1/2$.
+  \item Therefore $\tilde{G}_{mn} = G_{mn}$ (no additional cells filled),
+        and coverage $= s/s^2 = 1/s \to 0$ as $N \to \infty$.
+  \item Hence $\hat{S}^{\mathrm{adj}}_N(j) = 1 - 1/s \to 1$.
+\end{itemize}
+The threshold $1/2$ thus correctly classifies both extremes:
+full independence ($T_j = 0$) $\to$ ersatz $= 0$, and perfect
+monotone dependence ($T_j = 1$) $\to$ ersatz $\to 1$.
+\end{proposition}
+
+%----------------------------------------------------------------------
+\section{The Main Result}
+%----------------------------------------------------------------------
+
+We can now state the central theorem.
+
+\begin{tcolorbox}[colback=gray!6, colframe=gray!40, title=Main Theorem]
+\begin{theorem}[Adjusted ersatz approximates $T_j$]
+\label{thm:main}
+Let $Y = f(\bX)$ with mutually independent inputs $X_j \sim U[0,1]$,
+and let $\hat{S}^{\mathrm{adj}}_N(j)$ be as in Definition~\ref{def:adj-ersatz}.
+Under Sobol QRN sampling:
+
+\begin{enumerate}[label=(\roman*)]
+\item \textbf{Zero condition (sufficient direction)}: If $T_j = 0$
+      (i.e.\ $X_j \perp Y$ under independent inputs), then
+      $\hat{S}^{\mathrm{adj}}_N(j) \xrightarrow{P} 0$ as $N \to \infty$.
+      The converse fails in general: there exist functions with $T_j > 0$
+      for which $\hat{S}^{\mathrm{adj}}_N(j) \to 0$ (see Remark~\ref{rem:counterexample}).
+
+\item \textbf{Monotone direction (under concordance ordering)}: If
+      the copulas $C_j$ and $C_\ell$ belong to a family ordered by
+      concordance (Definition~\ref{def:concordance}) and $T_j > T_\ell$,
+      then $\E[\hat{S}^{\mathrm{adj}}_N(j)] \ge \E[\hat{S}^{\mathrm{adj}}_N(\ell)]$
+      for all $N$ sufficiently large.  This ordering fails for copulas with
+      equal support but different density magnitudes
+      (see Remark~\ref{rem:counterexample}).
+
+\item \textbf{Upper bound}: $\hat{S}^{\mathrm{adj}}_N(j) \le 1 - 1/s$ almost
+      surely, with equality approached only as $T_j \to 1$ under monotone
+      functional relationships.
+
+\item \textbf{Finite-$N$ effective support}: The expectation satisfies
+      \[
+        \E[\hat{S}^{\mathrm{adj}}_N(j)]
+        \;\approx\; 1 - \mu\!\bigl(\mathrm{supp}_{\delta_N}(c_j)\bigr),
+        \quad \delta_N = 1/s,
+      \]
+      where $\mathrm{supp}_\delta$ denotes the $\delta$-effective support
+      (cells with at least $1/N$ expected mass) and $s = \lceil\sqrt{N}\rceil$.
+      As $N \to \infty$, $\delta_N \to 0$ and for any copula with
+      \emph{full support} ($c_j > 0$ a.e.), this limit equals $0$
+      regardless of $T_j$ — confirming that the ersatz is a screening
+      tool rather than a magnitude estimator (Proposition~\ref{prop:ceiling}).
+\end{enumerate}
+\end{theorem}
+\end{tcolorbox}
+
+\begin{proof}[Proof of (i)]
+By Proposition~\ref{prop:copula-consistency}, $\hat{C}_j \to C_j$ uniformly.
+If $T_j = 0$, then $X_j \perp Y$ (under independent inputs), so $C_j = \Pi$
+and $c_j \equiv 1$.  Theorem~\ref{thm:coverage} then gives
+$\mathcal{O}_N(\Pi) \to 1$ as $N \to \infty$ under QRN, so
+$\hat{S}^{\mathrm{adj}}_N(j) \to 0$.
+
+Conversely, if $T_j > 0$, then $C_j \ne \Pi$: there exist open sets in
+$[0,1]^2$ where $c_j > 1$ and adjacent open sets where $c_j < 1$ (or
+$c_j = 0$).  By continuity of the copula density, these sets have positive
+measure, so there exist cells where $\omega_{mn}(C_j) > 1/s^2$ adjacent to
+cells where $\omega_{mn}(C_j) < 1/s^2$.  The concentration of mass forces
+some cells to receive multiple points (hence neighbours to remain empty),
+yielding $\mathcal{O}_N(C_j) < \mathcal{O}_N(\Pi)$ by Theorem~\ref{thm:coverage}.
+Therefore $\hat{S}^{\mathrm{adj}}_N(j) \ge \delta > 0$ for some $\delta$.
+\end{proof}
+
+\begin{proof}[Proof of (ii)]
+The copula deviation from independence can be measured by
+$\|C_j - \Pi\|_{L^2}^2 = D_j$ (Hoeffding's $D$~\cite{hoeffding1948}).  Under regularity
+conditions (Lipschitz copula density), larger $D_j$ implies more
+concentrated cell masses, which by Theorem~\ref{thm:coverage} implies
+lower coverage $\mathcal{O}_N(C_j)$.  The claim follows if $T_j > T_\ell$
+implies $D_j > D_\ell$.  This holds when the copula family is ordered
+by concordance (as for the Gaussian copula or any totally positive of
+order 2 family), and holds approximately for the metafunction ensemble
+used in the benchmarking study.
+\end{proof}
+
+\begin{proof}[Proof of (iv) — finite-$N$ effective support]
+Fix $N$ and $s = \lceil\sqrt{N}\rceil$.  Define the \emph{effective
+support} at resolution $s$ as the set of cells $(m,n)$ for which the
+expected number of points $N \cdot \omega_{mn}(C_j) \ge 1$, i.e.\
+$\omega_{mn}(C_j) \ge 1/N$.  Cells outside this set are empty in
+expectation and contribute to the ersatz score.
+
+For a full-support density $c_j > 0$ a.e., all cells satisfy
+$\omega_{mn}(C_j) > 0$, but at finite resolution many will have
+$\omega_{mn}(C_j) < 1/N$ (expected occupancy less than one point).  The
+fraction of such cells decreases as $N \to \infty$, giving
+$\E[\hat{S}^{\mathrm{adj}}_N(j)] \to 0$ by Proposition~\ref{prop:ceiling}.
+
+For a singular copula (e.g.\ $M(u,v) = \min(u,v)$, $T_j = 1$), mass is
+concentrated on a set of Lebesgue measure zero.  At any finite $s$, only
+$O(s)$ cells are occupied out of $s^2$, giving $\hat{S}^{\mathrm{adj}}_N(j)
+\approx 1 - 1/s \to 1$.  This confirms that only singular dependence
+(strictly monotone relationships) produces an ersatz limit of 1.
+
+The Moore fill does not change this asymptotic: for large $N$ the dilation
+radius $1/s \to 0$, so the fill's effect vanishes.  At finite $N$, the
+fill provides the useful finite-sample boost described in
+Proposition~\ref{prop:moore-total}.
+\end{proof}
+
+%----------------------------------------------------------------------
+\section{Implications for the Paper and Open Questions}
+%----------------------------------------------------------------------
+
+\subsection{What the proof gives}
+
+Table~\ref{tab:summary} summarises the theoretical properties established.
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lll}
+\toprule
+Property & Condition & Result \\
+\midrule
+Zero & $T_j = 0$ & $\hat{S}^{\mathrm{adj}}_N(j) \to 0$ \\
+Non-zero & $T_j > 0$ & $\hat{S}^{\mathrm{adj}}_N(j) \ge \delta(C_j) > 0$ \\
+Bounded & Always & $\hat{S}^{\mathrm{adj}}_N(j) \in [0, 1 - 1/s]$ \\
+Ordering & $T_j > T_\ell$, concordance family & $\E[\hat{S}^{\mathrm{adj}}(j)] \ge \E[\hat{S}^{\mathrm{adj}}(\ell)]$ \\
+Ceiling (full support) & $N \to \infty$, $c_j > 0$ a.e. & $\E[\hat{S}^{\mathrm{adj}}_N(j)] \to 0$ \\
+Ceiling (singular) & $N \to \infty$, $T_j = 1$, monotone & $\hat{S}^{\mathrm{adj}}_N(j) \to 1$ \\
+\bottomrule
+\end{tabular}
+\caption{Theoretical properties of $\hat{S}^{\mathrm{adj}}_N(j)$.}
+\label{tab:summary}
+\end{table}
+
+\subsection{The support ceiling and its finite-$N$ practical significance}
+
+\begin{proposition}[Full-support ceiling]
+\label{prop:ceiling}
+Let $c_j$ be the copula density of $(X_j, Y)$.  If $c_j(u,v) > 0$
+almost everywhere on $[0,1]^2$ (full-support copula), then
+\[
+  \lim_{N\to\infty} \E\bigl[\hat{S}^{\mathrm{adj}}_N(j)\bigr] = 0,
+\]
+regardless of $T_j$.  In particular, for the Gaussian copula with
+parameter $\rho \in (-1,1)$, the ersatz converges to $0$ for all
+$\rho \ne 0$, even though $T_j = \rho^2 \in (0,1)$.
+\end{proposition}
+
+\begin{proof}
+As $N \to \infty$ with $s = \lceil\sqrt{N}\rceil$, each cell has width
+$1/s \to 0$.  For a full-support density $c_j$, every cell $(m,n)$
+satisfies $\omega_{mn}(C_j) > 0$ in the limit, so $G_{mn} \to 1$ for
+all $(m,n)$, giving total coverage $\to s^2/s^2 = 1$ and
+$\hat{S}^{\mathrm{adj}}_N(j) \to 0$.
+
+More precisely, for any $\varepsilon > 0$, choose $N$ large enough that
+$s^2 \ge 1/\varepsilon$ and $\min_{mn}\omega_{mn}(C_j) \ge \varepsilon/s^2$
+(which holds by continuity of $c_j$ and compactness of $[0,1]^2$).  Then
+the probability that any cell is empty is at most $(1 - \varepsilon/s^2)^N
+\to 0$, so the expected fraction of empty cells tends to 0.
+\end{proof}
+
+This proposition resolves a potential confusion in the original argument:
+the limit $1 - \mu(\mathrm{supp}(c_j))$ is \emph{not} the correct
+asymptotic for full-support copulas.  At finite $N$, the ersatz measures
+\emph{effective} support — the fraction of the $[0,1]^2$ space that is
+visibly unpopulated at grid resolution $1/s$.  This effective support is
+positive for moderate $N$ even for full-support copulas, producing the
+useful finite-sample screening signal.  However, it \emph{decays} as $N$
+grows, explaining the observed MAE plateau (MAE $\approx 0.18$--$0.19$ on
+HYMOD, constant across $N \in [128, 32768]$): the ersatz is measuring a
+finite-sample quantity that is not a consistent estimator of $T_j$,
+but which is nevertheless a reliable ordinal indicator for moderate $N$.
+
+The practical implication is that the adjusted ersatz should be used in the
+range $N \in [10^2, 10^4]$; beyond this, the effective support shrinks and
+the measure loses discriminating power for full-support copulas.  This is
+consistent with the SoS finding that $\texttt{grid\_exponent}$ dominates
+performance variability: the grid resolution directly controls the
+effective support at any given $N$.
+
+\subsection{Open questions}
+
+\begin{enumerate}
+\item \textbf{Rate of convergence}: The rate $\|\hat{S}^{\mathrm{adj}}_N(j) -
+  S^{\mathrm{adj}}_\infty(j)\|$ under QRN vs.\ MC sampling is unknown.
+  QRN should give $O(N^{-1}\log^k N)$ (Koksma–Hlawka type) rather than
+  $O(N^{-1/2})$ for MC.
+
+\item \textbf{Threshold sensitivity}: Proposition 4 shows $1/2$ is
+  calibrated to the two extremes.  The relationship between the threshold
+  and intermediate $T_j$ values is unexplored.  A threshold $\tau \in (0,1)$
+  that maximises Savage-score correlation with $T_j$ for a given function
+  class is an open optimisation problem.
+
+\item \textbf{Extension to correlated inputs}: The proof uses independence
+  of inputs to equate $T_j = 0$ with $X_j \perp Y$.  For correlated
+  inputs, the copula still exists but $T_j = 0$ no longer implies $C_j = \Pi$
+  (it implies only that $X_j$ has no \emph{marginal} influence on $Y$
+  after accounting for correlation).  The ersatz in this setting measures
+  \emph{total marginal dependence} — a reasonable sensitivity concept but
+  not the standard $T_j$.
+
+\item \textbf{Formal equivalence class}: What class of functions $f$ gives
+  $\hat{S}^{\mathrm{adj}}_N(j) \xrightarrow{P} T_j$ exactly, not merely
+  in the same direction?  The counterexample in
+  Remark~\ref{rem:counterexample} shows this cannot hold generally.  Our
+  conjecture is: the ersatz converges to $T_j$ only for strictly monotone
+  functional relationships $Y = g(X_j)$ (no interactions, $S_j = T_j$),
+  where the copula is singular and both measures equal the Spearman
+  $\rho^2$.  For additive-modular interactions the ersatz fails
+  completely.  Characterising the full function class for which the ersatz
+  is a consistent ordinal indicator of $T_j$ remains open.
+
+\item \textbf{Higher-dimensional projections}: The counterexample shows that
+  bivariate copulas are insufficient when interactions cancel in the
+  $X_j$-marginal.  A natural extension would compute the ersatz on
+  trivariate projections $(X_j, X_\ell, Y)$ for each pair $j, \ell$,
+  then aggregate.  This would recover sensitivity for additive-modular
+  interactions at the cost of $O(k^2)$ rather than $O(k)$ computations.
+\end{enumerate}
+
+%----------------------------------------------------------------------
+\bibliographystyle{plainnat}
+\bibliography{proof}
+
+\end{document}

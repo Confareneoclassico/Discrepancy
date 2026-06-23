@@ -1,0 +1,35 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# PLACEHOLDER: decide whether large generated result PDFs should be tracked.
+# Currently results/figures/*.pdf produced by src/discrepancy.py are NOT
+# tracked here (see results/README.md) so they are not ignored either —
+# add entries below if the author team decides generated outputs should
+# stay untracked once they start appearing in `results/figures/`.

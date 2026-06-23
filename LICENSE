@@ -1,0 +1,27 @@
+<!-- PLACEHOLDER — NO LICENSE HAS BEEN CHOSEN YET.
+
+This file is a placeholder inserted during repository packaging. Until the author
+team selects and inserts an actual license text below, this repository is
+**all rights reserved** by default under copyright law: no one may copy, modify,
+or redistribute its contents.
+
+Suggested options to discuss among the author team (see README.md "License" section
+for more context):
+
+  1. MIT License        — permissive, minimal conditions, common for research code.
+  2. BSD 3-Clause        — similar to MIT, with an additional non-endorsement clause.
+  3. Apache License 2.0  — permissive, includes an explicit patent grant.
+  4. CC-BY-4.0           — appropriate for the docs/ and data/ directories if the
+                            authors want a single license to mirror the CC-BY license
+                            of Puy, Roy & Saltelli (2024), the paper this work extends.
+
+A common pattern for repositories mixing code and a manuscript is to dual-license:
+e.g. MIT for src/ and R/, CC-BY-4.0 for docs/ and data/. If a single license is
+preferred instead, MIT or CC-BY-4.0 are both reasonable choices for the whole
+repository.
+
+Once a choice is made, replace the entire contents of this file with the standard
+text of the chosen license (most licenses' full text can be obtained from
+https://choosealicense.com/). -->
+
+MIT License
