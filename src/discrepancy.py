@@ -1540,20 +1540,20 @@ def plot_convergence_grid(conv_dict: dict,
             ax.set_xscale("log", base=2)
             ax.set_xticks(Ns)
             ax.set_xticklabels([str(int(n)) for n in Ns],
-                                rotation=45, fontsize=8)
-            ax.set_xlabel("Sample size N", fontsize=10)
-            ax.set_ylabel(ylabel, fontsize=10)
+                                rotation=45, fontsize=11)
+            ax.set_xlabel("Sample size N", fontsize=13)
+            ax.set_ylabel(ylabel, fontsize=13)
             ax.set_ylim(*ylim)
-            ax.tick_params(labelsize=8)
+            ax.tick_params(labelsize=11)
             ax.grid(True, alpha=0.3)
 
-        ax_r.set_title(sname, fontsize=11, fontweight="bold")
-        ax_m.set_title(sname, fontsize=11, fontweight="bold")
+        ax_r.set_title(sname, fontsize=13, fontweight="bold")
+        ax_m.set_title(sname, fontsize=13, fontweight="bold")
         if row_idx == 0:
-            ax_r.legend(fontsize=8, loc="lower right")
+            ax_r.legend(fontsize=12, loc="lower right")
 
     plt.suptitle("Convergence of all estimators vs sample size",
-                 fontsize=13, fontweight="bold", y=1.002)
+                 fontsize=14, fontweight="bold", y=1.002)
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     print(f"  Saved {filename}")
@@ -1803,7 +1803,7 @@ if __name__ == "__main__":
 
 
     # ── Joint convergence grid plot across all benchmarks ───────────
-    plot_convergence_grid(conv_dict, filename="../results/figures/convergence_all.pdf")
+    plot_convergence_grid(conv_dict, filename="convergence_all.pdf")
 
     # ── Becker metafunction study ────────────────────────────────────
     # Compares all four estimators over the full hyperparameter space.
@@ -1885,13 +1885,13 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 4, figsize=(20, 5))
     for ax, (_, ylabel, cols) in zip(axes, metric_groups):
         data_plot = [becker_df[c].dropna().values for c in cols]
-        ax.boxplot(data_plot, labels=methods_labels)
+        ax.boxplot(data_plot, label=methods_labels)
         ax.set_ylabel(ylabel, fontsize=13)
-        ax.set_ylim(0, 1)
+        ax.set_ylim(-0.1, 1.1)
         ax.tick_params(labelsize=9)
     plt.suptitle("Becker metafunction: five estimators compared", fontsize=13)
     plt.tight_layout()
-    plt.savefig("../results/figures/becker_boxplots.pdf", dpi=300)
+    plt.savefig("becker_boxplots.pdf", dpi=300)
     print("  Saved becker_boxplots.pdf")
 
 
@@ -1926,29 +1926,30 @@ if __name__ == "__main__":
     ax.set_yticklabels(sos_result.index, fontsize=11)
     plt.colorbar(im, ax=ax, label="Total-order Sobol index $T_i$")
     ax.set_title("SoS: which method parameters drive performance variability?",
-                 fontsize=12, fontweight="bold")
+                 fontsize=14, fontweight="bold")
     # Annotate cells
     for i in range(len(sos_result.index)):
         for j in range(len(sos_result.columns)):
             v = sos_result.values[i, j]
             if not np.isnan(v):
                 ax.text(j, i, f"{v:.2f}", ha="center", va="center",
-                        fontsize=9,
+                        fontsize=11,
                         color="white" if v > 0.5 else "black")
     plt.tight_layout()
-    plt.savefig("../results/figures/sos_heatmap.pdf", dpi=300)
+    plt.savefig("sos_heatmap.pdf", dpi=300)
     print("  Saved sos_heatmap.pdf")
 
     # ── Barplot: which SoS parameter matters most, averaged across outputs ──
     mean_Ti = sos_result.mean(axis=1).sort_values(ascending=False)
-    fig2, ax2 = plt.subplots(figsize=(7, 4))
+    fig2, ax2 = plt.subplots(figsize=(8, 5))
     ax2.bar(range(len(mean_Ti)), mean_Ti.values,
             color=plt.cm.YlOrRd(mean_Ti.values))
     ax2.set_xticks(range(len(mean_Ti)))
-    ax2.set_xticklabels(mean_Ti.index, fontsize=12, rotation=45)
-    ax2.set_ylabel("Mean $T_i$ across all output metrics", fontsize=12)
+    ax2.set_xticklabels(mean_Ti.index, fontsize=14, rotation=45)
+    ax2.set_ylabel("Mean $T_i$ across all output metrics", fontsize=14)
+    ax2.tick_params(labelsize=13)
     ax2.set_title("SoS: global importance of method-level parameters",
-                  fontsize=12, fontweight="bold")
+                  fontsize=14, fontweight="bold")
     ax2.set_ylim(0, 1)
     plt.tight_layout()
     plt.savefig("sos_barplot.pdf", dpi=300)
