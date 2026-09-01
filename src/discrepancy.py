@@ -1547,8 +1547,8 @@ def plot_convergence_grid(conv_dict: dict,
             ax.tick_params(labelsize=11)
             ax.grid(True, alpha=0.3)
 
-        ax_r.set_title(sname, fontsize=13, fontweight="bold")
-        ax_m.set_title(sname, fontsize=13, fontweight="bold")
+        ax_r.set_title(f"{sname} — ρ",   fontsize=13, fontweight="bold")
+        ax_m.set_title(f"{sname} — MAE", fontsize=13, fontweight="bold")
         if row_idx == 0:
             ax_r.legend(fontsize=12, loc="lower right")
 
@@ -1885,9 +1885,14 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 4, figsize=(20, 5))
     for ax, (_, ylabel, cols) in zip(axes, metric_groups):
         data_plot = [becker_df[c].dropna().values for c in cols]
-        ax.boxplot(data_plot, label=methods_labels)
+        ax.boxplot(data_plot)
+        # Explicit tick labels: version-proof across all matplotlib releases
+        # (labels= was deprecated in 3.9 and later removed; tick_labels= fails
+        # on matplotlib < 3.9). Setting ticks after the call always works.
+        ax.set_xticks(range(1, len(methods_labels) + 1))
+        ax.set_xticklabels(methods_labels, fontsize=12)
         ax.set_ylabel(ylabel, fontsize=13)
-        ax.set_ylim(-0.1, 1.1)
+        ax.set_ylim(0, 1)
         ax.tick_params(labelsize=9)
     plt.suptitle("Becker metafunction: five estimators compared", fontsize=13)
     plt.tight_layout()
