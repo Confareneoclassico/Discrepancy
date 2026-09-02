@@ -1,19 +1,17 @@
 # Adjusted Ersatz Discrepancy for Global Sensitivity Analysis
 
-[![PLACEHOLDER: build status badge]()]()
-[![PLACEHOLDER: DOI badge — add once archived on Zenodo]()]()
-[![License: PLACEHOLDER](https://img.shields.io/badge/license-PLACEHOLDER-lightgrey.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> **Status note (this file was assembled by an AI assistant from the author's working
-> files for GitHub packaging).** Every section marked `PLACEHOLDER` below requires a
-> decision or a value from the author team before this repository is made public.
-> Nothing marked `PLACEHOLDER` has been verified or chosen by the authors.
+<!-- ACTION: replace XXXXXXX above (twice) with the Zenodo *concept* DOI number,
+     i.e. the DOI that always resolves to the latest version. Zenodo shows the
+     ready-made badge markdown on the record page under "Details". -->
 
 This repository contains the code, data, and supplementary material for:
 
 > Lo Piano, S., A. Lachi, R. Sheikholeslami, A. Puy, P. T. Roy,
 > A. Saltelli, **"Improving Discrepancy Measures for Global Sensitivity Analysis"**,
-> *Technometrics*, 2026 (manuscript in preparation).
+> submitted to *Environmental Modelling and Software*, 2026.
 
 The paper extends the *S-ersatz* discrepancy measure of
 [Puy, Roy & Saltelli (2024, *Technometrics*)](https://doi.org/10.1080/00401706.2024.2304341)
