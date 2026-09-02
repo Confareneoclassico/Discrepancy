@@ -1,11 +1,7 @@
 # Adjusted Ersatz Discrepancy for Global Sensitivity Analysis
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22233984.svg)](https://doi.org/10.5281/zenodo.22233984)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
-<!-- ACTION: replace XXXXXXX above (twice) with the Zenodo *concept* DOI number,
-     i.e. the DOI that always resolves to the latest version. Zenodo shows the
-     ready-made badge markdown on the record page under "Details". -->
 
 This repository contains the code, data, and supplementary material for:
 
@@ -163,13 +159,10 @@ Until the manuscript is published, please cite the archived software release:
   title     = {Adjusted Ersatz Discrepancy for Global Sensitivity Analysis},
   year      = {2026},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.XXXXXXX},
+  doi       = {10.5281/zenodo.22233984},
   url       = {https://github.com/Confareneoclassico/Discrepancy}
 }
 ```
-
-<!-- ACTION: replace XXXXXXX with the Zenodo concept DOI, and update this section
-     with the journal-article citation once the manuscript is accepted. -->
 
 This work builds directly on:
 
