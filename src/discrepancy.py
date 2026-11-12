@@ -1,1963 +1,700 @@
-import matplotlib
-matplotlib.use('Agg')
-import warnings
-warnings.filterwarnings('ignore')  # suppress numpoly/chaospy noise
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='numpoly')
 """
-Python translation of discrepancy.R
-------------------------------------
-Implements:
-  - sobol_mat / scrambled_sobol  : Sobol sample-matrix construction
-  - update_matrix                : neighbour-fill for the adjusted discrepancy
-  - s_ersatz / s_ersatz_adj      : unadjusted / adjusted ersatz-discrepancy
-  - discrepancy_ersatz           : dispatcher over all parameters
-  - jansen_fun                   : Jansen total-order Sobol estimator
-  - savage_scores_fun            : Savage scores
-  - Test functions               : Ishigami, Bratley 1988/1992, Sobol-g, Oakley-O'Hagan
-  - Analysis blocks              : replicating every study in the R script
+discrepancy.py -- Adjusted ersatz discrepancy and comparator estimators
+=======================================================================
+
+Library module accompanying
+
+    Lo Piano, S., Lachi, A., Sheikholeslami, R., Puy, A., Roy, P. T.,
+    Saltelli, A., "An Adjusted Ersatz Discrepancy for Global Sensitivity
+    Analysis: Theory and Benchmarks" (Environmental Modelling & Software,
+    revised version; submitted as "Improving Discrepancy Measures for Global
+    Sensitivity Analysis").
+
+Version 2.0 (revision).  Changes with respect to version 1.x are listed
+in CHANGELOG.md; the most important ones are
+
+  * PCE indices are now computed from the coefficients of an
+    *orthonormal* polynomial basis (version 1.x read the monomial
+    coefficients of the fitted polynomial, which is not a valid Sobol'
+    decomposition);
+  * the benchmark functions follow their published definitions (as
+    implemented in the R package sensobol);
+  * the Becker (2020) metafunction is a faithful port of sensobol's
+    `metafunction`;
+  * the sampling-design factor of the sensitivity-of-sensitivity study
+    is decoded correctly (in 1.x it was constant).
+
+Everything is vectorised NumPy; the only non-standard dependency is
+SciPy.  Inputs of every estimator are given on the unit hypercube
+(probability-integral-transformed inputs, u = F_i(x_i)).
 """
+
+from __future__ import annotations
 
 import math
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 from itertools import combinations
-from scipy.stats import qmc, rankdata, truncnorm
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-# ─────────────────────────────────────────────────────────────
-# 1.  Sobol sample-matrix construction
-# ─────────────────────────────────────────────────────────────
+import numpy as np
+from scipy.stats import qmc, norm, beta as beta_dist, rankdata, ks_2samp
+from scipy.spatial.distance import pdist
+from scipy.special import expit
 
-def _build_loop(k: int, order: str) -> list:
+# =====================================================================
+# 1.  Sampling designs on [0,1]^d
+# =====================================================================
+
+DESIGNS = ("sobol", "srs", "lhs")
+
+
+def design_matrix(N: int, d: int, design: str = "sobol",
+                  seed: Optional[int] = None,
+                  maximin_candidates: int = 20) -> np.ndarray:
+    """Return an N x d design on [0,1)^d.
+
+    design
+        'sobol' : scrambled Sobol' sequence (scipy.stats.qmc.Sobol,
+                  scramble=True: linear matrix scramble followed by a
+                  digital shift); the first N points of the sequence.
+        'srs'   : simple random sampling (i.i.d. uniform points).
+        'lhs'   : maximin Latin hypercube -- the best (largest minimum
+                  inter-point distance) of `maximin_candidates` random
+                  Latin hypercubes.
     """
-    Return the list of column-index groups used to build AB/BA/CB matrices.
-
-    For 'first' order each element is a length-1 list [j].
-    For higher orders the list is extended with all length-2, -3, … pairs.
-    Mirrors R:  first <- 1:k;  second <- c(first, combn(1:k,2,simplify=FALSE)); …
-    """
-    first = [[j] for j in range(k)]
-    if order == "first":
-        return first
-    pairs = [list(p) for p in combinations(range(k), 2)]
-    if order == "second":
-        return first + pairs
-    trips = [list(t) for t in combinations(range(k), 3)]
-    if order == "third":
-        return first + pairs + trips
-    quads = [list(q) for q in combinations(range(k), 4)]
-    if order == "fourth":
-        return first + pairs + trips + quads
-    raise ValueError("order must be 'first', 'second', 'third', or 'fourth'")
-
-
-def scrambled_sobol(matrices: tuple, A: np.ndarray, B: np.ndarray,
-                    C: np.ndarray | None, order: str) -> np.ndarray | None:
-    """
-    Build the scrambled matrices AB, BA, CB from base matrices A, B, C.
-
-    Returns a stacked (n_matrices * N) × k array, or None if nothing requested.
-    Mirrors R's scrambled_sobol().
-    """
-    loop = _build_loop(A.shape[1], order)
-    parts = []
-
-    if "AB" in matrices:
-        for cols in loop:
-            AB = A.copy();  AB[:, cols] = B[:, cols]
-            parts.append(AB)
-
-    if "BA" in matrices:
-        for cols in loop:
-            BA = B.copy();  BA[:, cols] = A[:, cols]
-            parts.append(BA)
-
-    if "CB" in matrices and C is not None:
-        for cols in loop:
-            CB = C.copy();  CB[:, cols] = B[:, cols]
-            parts.append(CB)
-
-    return np.vstack(parts) if parts else None
-
-
-def sobol_mat(N: int, params: list,
-              matrices: tuple = ("A", "B", "AB"),
-              order: str = "first",
-              type_: str = "QRN",
-              seed: int = 123) -> np.ndarray:
-    """
-    Build the full Sobol sample matrix ready for model evaluation.
-
-    Parameters
-    ----------
-    N        : base sample size
-    params   : list of parameter names (length = k)
-    matrices : which base matrices to include in the output
-    order    : highest interaction order for AB/BA/CB columns
-    type_    : 'QRN' (scrambled Sobol), 'R' (random uniform), 'LHS'
-    seed     : RNG seed
-
-    Returns
-    -------
-    NumPy array of shape (n_rows × k).
-    Row layout: [A rows] [B rows] [C rows] [scrambled rows]
-    (any section is omitted when the corresponding letter is absent from matrices)
-    """
-    k = len(params)
-    has_C = any("C" in m for m in matrices)
-    n_base = 3 if has_C else 2
-
-    # ── draw the raw uniform base ──────────────────────────────
-    if type_ == "QRN":
-        # R's sobol_mat uses qrng::sobol(seed=123) regardless of the epsilon
-        # argument — the seed is hardcoded inside the function. Python mirrors
-        # this by ignoring the caller-supplied seed for QRN and always using 123.
-        sampler = qmc.Sobol(d=k * n_base, scramble=True, seed=123)
-        df = sampler.random(N)
-    elif type_ == "R":
-        # For random sampling R uses set.seed(epsilon) before stats::runif,
-        # so the caller-supplied seed IS used.
+    if design == "sobol":
+        eng = qmc.Sobol(d=d, scramble=True, seed=seed)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")      # N not a power of two
+            return eng.random(N)
+    if design == "srs":
+        return np.random.default_rng(seed).random((N, d))
+    if design == "lhs":
         rng = np.random.default_rng(seed)
-        df = rng.uniform(size=(N, k * n_base))
-    elif type_ == "LHS":
-        sampler = qmc.LatinHypercube(d=k * n_base, seed=seed)
-        df = sampler.random(N)
+        best, best_score = None, -np.inf
+        for _ in range(max(1, maximin_candidates)):
+            cand = qmc.LatinHypercube(d=d, seed=rng).random(N)
+            score = pdist(cand).min() if N > 1 else 0.0
+            if score > best_score:
+                best, best_score = cand, score
+        return best
+    raise ValueError(f"unknown design '{design}'")
+
+
+def jansen_matrices(N: int, k: int, design: str = "sobol",
+                    seed: Optional[int] = None) -> np.ndarray:
+    """Stacked [A; AB_1; ...; AB_k] matrix ((k+1)N x k) for Jansen's
+    total-order estimator; A and B are the two halves of a 2k-column
+    design."""
+    D = design_matrix(N, 2 * k, design, seed)
+    A, B = D[:, :k], D[:, k:]
+    blocks = [A]
+    for i in range(k):
+        AB = A.copy()
+        AB[:, i] = B[:, i]
+        blocks.append(AB)
+    return np.vstack(blocks)
+
+
+def jansen_total(Y: np.ndarray, N: int, k: int) -> np.ndarray:
+    """Jansen (1999) estimator of the total-order indices from the
+    output of `jansen_matrices` (Y has length (k+1)N, block layout)."""
+    Y = np.asarray(Y, float).reshape(k + 1, N)
+    YA = Y[0]
+    V = YA.var()
+    if V == 0:                      # constant output on A: indices undefined
+        return np.full(k, np.nan)
+    return np.array([0.5 * np.mean((YA - Y[i + 1]) ** 2) / V
+                     for i in range(k)])
+
+
+def saltelli_first(Y: np.ndarray, YB: np.ndarray, N: int, k: int,
+                   centre: bool = True) -> np.ndarray:
+    """Saltelli et al. (2010) estimator of the first-order indices,
+    S_i = mean((f(B) - c) [f(AB_i) - f(A)]) / V, from the output of
+    `jansen_matrices` (block layout) and the output YB at the matrix B of
+    the same 2k-column design.
+
+    With centre=True, c is the mean of f(A) and f(B); since
+    E[f(AB_i) - f(A)] = 0, centring leaves the expectation unchanged but
+    removes the term of the variance that grows with the squared output
+    mean (c = 0 gives the original estimator). V is the variance of f(A),
+    as in `jansen_total`, so that S_i and T_i share their denominator.
+    An input that does not affect the output has f(AB_i) = f(A) and
+    S_i = T_i = 0 exactly."""
+    Y = np.asarray(Y, float).reshape(k + 1, N)
+    YA, YB = Y[0], np.asarray(YB, float)
+    V = YA.var()
+    if V == 0:                      # constant output on A: indices undefined
+        return np.full(k, np.nan)
+    c = 0.5 * (YA.mean() + YB.mean()) if centre else 0.0
+    return np.array([np.mean((YB - c) * (Y[i + 1] - YA)) / V
+                     for i in range(k)])
+
+
+# =====================================================================
+# 2.  Ersatz discrepancy measures
+# =====================================================================
+
+def _row_index(x: np.ndarray, s: int) -> np.ndarray:
+    """0-based row (input-axis) cell index of points x in [0,1]."""
+    return np.clip(np.ceil(x * s).astype(int), 1, s) - 1
+
+
+def _rank_column_index(y: np.ndarray, s: int, ties: str = "ordinal",
+                       rng: Optional[np.random.Generator] = None
+                       ) -> np.ndarray:
+    """0-based column (output-axis) cell index after the rank transform
+    v = (rank - 1)/N.  Ties are broken by order of appearance
+    ('ordinal', R's ties.method = "first") or at random ('random')."""
+    N = len(y)
+    if ties == "ordinal":
+        r = rankdata(y, method="ordinal")
+    elif ties == "random":
+        rng = np.random.default_rng() if rng is None else rng
+        perm = rng.permutation(N)
+        r = np.empty(N, int)
+        r[perm] = rankdata(y[perm], method="ordinal")
     else:
-        raise ValueError("type_ must be 'QRN', 'R', or 'LHS'")
-
-    A = df[:, :k]
-    B = df[:, k:2*k]
-    C = df[:, 2*k:3*k] if has_C else None
-
-    out = scrambled_sobol(matrices=matrices, A=A, B=B, C=C, order=order)
-
-    # ── assemble in the R order: A, B, C, scrambled ────────────
-    parts = []
-    if "A" in matrices: parts.append(A)
-    if "B" in matrices: parts.append(B)
-    if "C" in matrices and C is not None: parts.append(C)
-    if out is not None: parts.append(out)
-
-    return np.vstack(parts)
-
-
-# ─────────────────────────────────────────────────────────────
-# 2.  Neighbour-fill (update_matrix)
-# ─────────────────────────────────────────────────────────────
-
-def update_matrix(M: np.ndarray, fill_threshold: float = 0.5) -> np.ndarray:
-    """
-    Vectorised version: for every zero cell, if the mean of its Moore
-    neighbours >= fill_threshold, set it to 1.
-
-    fill_threshold : float in (0, 1], default 0.5
-        Lower values fill more aggressively (higher α, lower β).
-        Higher values are more conservative (lower α, higher β).
-        Calibrated proof: 0.5 correctly maps independence→ersatz=0
-        and perfect monotone dependence→ersatz→1 (see proof.pdf §5).
-
-    Uses scipy.ndimage for O(s²) vectorised computation.
-    """
-    from scipy.ndimage import uniform_filter
-
-    M = M.astype(float)
-    # uniform_filter computes the mean over a 3×3 window (includes centre).
-    # We want mean of the up-to-8 neighbours excluding the centre itself.
-    # neighbour_sum = box_sum_3x3 - M
-    # neighbour_count = (number of cells in 3×3 window) - 1
-    #   = min(i+2,nr)*min(j+2,nc) - max(i-1,0)*max(j-1,0) ... approximated
-    # Simpler: use the full 3×3 mean then adjust back for the centre.
-    nr, nc = M.shape
-    box_sum  = uniform_filter(M, size=3, mode="constant", cval=0.0) * 9
-    # Count cells in each window (handles edges correctly)
-    ones     = np.ones_like(M)
-    box_cnt  = uniform_filter(ones, size=3, mode="constant", cval=0.0) * 9
-
-    nbr_sum  = box_sum  - M
-    nbr_cnt  = box_cnt  - 1          # exclude centre cell count
-    nbr_cnt  = np.where(nbr_cnt < 1, 1, nbr_cnt)   # avoid /0 at corners
-    nbr_mean = nbr_sum / nbr_cnt
-
-    # Fill zero cells where neighbour mean >= fill_threshold
-    M_new = np.where((M == 0) & (nbr_mean >= fill_threshold - 1e-10), 1.0, M)
-    return M_new.astype(int)
-
-
-# ─────────────────────────────────────────────────────────────
-# 3.  Ersatz-discrepancy sensitivity measures
-# ─────────────────────────────────────────────────────────────
-
-def s_ersatz(mat: np.ndarray) -> float:
-    """
-    Unadjusted ersatz discrepancy for a 2-column matrix [x_j, Y].
-
-    Steps:
-      1. Map x_j and min-max-scaled Y into an s×s grid (s = ceil(√N)).
-      2. Mark occupied cells.
-      3. Return 1 - (occupied cells) / s².
-    Mirrors R's s_ersatz().
-    """
-    N = mat.shape[0]
-    s = math.ceil(math.sqrt(N))
-
-    # Row index (1-based) for x_j  ∈ (0, 1]
-    m = np.ceil(mat[:, 0] * s).astype(int)          # 1 … s
-
-    # Column index (1-based) for Y after min-max scaling
-    x = mat[:, 1]
-    n_norm = (x - x.min()) / (x.max() - x.min())
-    n = np.ceil(n_norm * s).astype(int)
-    n = np.where(n == 0, 1, n)                       # push 0 → 1
-
-    # Mark cells (convert to 0-based for numpy)
-    grid = np.zeros((s, s), dtype=int)
-    grid[m - 1, n - 1] = 1
-
-    return 1.0 - grid.sum() / grid.size
-
-
-def s_ersatz_adj(mat: np.ndarray,
-                 fill_threshold: float = 0.5,
-                 grid_exponent: float = 0.5) -> float:
-    """
-    Adjusted ersatz discrepancy for a 2-column matrix [x_j, Y].
-
-    Differences from the unadjusted version:
-      • Y is rank-normalised (ordinal ranks / N) instead of min-max scaled.
-      • update_matrix() fills isolated zero cells (Moore neighbourhood).
-    Mirrors R's s_ersatz_adj() (discrepancy_fun.R).
-
-    Parameters
-    ----------
-    fill_threshold : Moore-neighbourhood mean threshold for filling a zero
-        cell.  Default 0.5 (calibrated to independence/comonotone extremes;
-        see proof.pdf §5).  Lower → more fill → lower β, higher α.
-    grid_exponent  : s = ceil(N^grid_exponent).  Default 0.5 (= √N).
-        Controls grid resolution; 0.4 gives a coarser grid (more robust at
-        small N), 0.6 a finer grid (more discriminating at large N).
-    """
-    N = mat.shape[0]
-    s = math.ceil(N ** grid_exponent)
-
-    m = np.ceil(mat[:, 0] * s).astype(int)           # 1 … s
-    m = np.clip(m, 1, s)
-
-    x = mat[:, 1]
-    # (rank − 1) / N  — ordinal (ties.method = "first" in R)
-    n_norm = (rankdata(x, method="ordinal") - 1) / N
-    n = np.ceil(n_norm * s).astype(int)
-    n = np.where(n == 0, 1, n)
-    n = np.clip(n, 1, s)
-
-    grid = np.zeros((s, s), dtype=int)
-    grid[m - 1, n - 1] = 1
-    grid = update_matrix(grid, fill_threshold=fill_threshold)
-
-    return 1.0 - grid.sum() / grid.size
-
-
-def discrepancy_ersatz(mat: np.ndarray, Y: np.ndarray,
-                       params: list, adj: int = 0,
-                       fill_threshold: float = 0.5,
-                       grid_exponent: float = 0.5) -> pd.DataFrame:
-    """
-    Compute the ersatz-discrepancy sensitivity index for every column of mat.
-
-    Parameters
-    ----------
-    mat            : N × k design matrix (values in [0, 1])
-    Y              : length-N output vector
-    params         : list of k parameter names
-    adj            : 0 → unadjusted (s_ersatz); 1 → adjusted (s_ersatz_adj)
-    fill_threshold : passed to s_ersatz_adj (default 0.5)
-    grid_exponent  : passed to s_ersatz_adj (default 0.5, i.e. s = ceil(√N))
-
-    Returns
-    -------
-    DataFrame with columns ['params', 'value']
-    """
-    values = []
-    for j in range(mat.shape[1]):
-        design = np.column_stack([mat[:, j], Y])
-        if adj == 0:
-            values.append(s_ersatz(design))
-        else:
-            values.append(s_ersatz_adj(design,
-                                       fill_threshold=fill_threshold,
-                                       grid_exponent=grid_exponent))
-
-    return pd.DataFrame({"params": params, "value": values})
-
-
-# ─────────────────────────────────────────────────────────────
-# 4.  Jansen total-order Sobol estimator
-# ─────────────────────────────────────────────────────────────
-
-def jansen_fun(d: np.ndarray, N: int, params: list) -> pd.DataFrame:
-    """
-    Jansen (1999) total-order Sobol estimator.
-
-    d   : 1-D array of length N*(1+k) — column-major layout:
-          [Y_A (N), Y_AB_1 (N), …, Y_AB_k (N)]
-    N   : base sample size
-    Returns a DataFrame with columns ['parameters', 'value'].
-    Mirrors R's jansen_fun().
-    """
-    # R's matrix(d, nrow=N) fills column-by-column (Fortran order)
-    m = np.array(d).reshape(-1, N).T          # shape (N, 1+k)
-    Y_A  = m[:, 0]
-    Y_AB = m[:, 1:]
-
-    f0  = Y_A.mean()
-    VY  = np.mean((Y_A - f0) ** 2)
-    value = (np.sum((Y_A[:, None] - Y_AB) ** 2, axis=0) / (2 * N)) / VY
-
-    return pd.DataFrame({"parameters": params, "value": value})
-
-
-# ─────────────────────────────────────────────────────────────
-# 5.  Savage scores
-# ─────────────────────────────────────────────────────────────
-
-def savage_scores_fun(x: np.ndarray) -> np.ndarray:
-    """
-    Compute Savage scores, matching R's savage_scores_fun() exactly.
-
-    Algorithm (mirrors R line-by-line):
-      true.ranks <- rank(-x)                    # average ties, float
-      p          <- sort(1 / true.ranks)        # ascending, uses float ranks
-      mat        <- matrix(rep(p,n), byrow=T)   # each row = p
-      mat[upper.tri(mat)] <- 0
-      out <- sort(rowSums(mat), dec=T)[true.ranks]   # R truncates float idx
-
-    Critical: 1/rank is computed on the FLOAT ranks (not int-cast), matching
-    R's behaviour. The integer cast is applied only at the final index step,
-    matching R's implicit truncation when indexing with a fractional value.
-
-    For the no-tie case (typical in SA) the result is identical to any
-    integer-rank version.  Tie handling now matches R exactly.
-    """
-    x = np.asarray(x, dtype=float)
-    n = len(x)
-
-    # rank(-x) with average ties — keep as float to match R
-    true_ranks = rankdata(-x, method="average")                # 1-based float, 1=largest
-
-    # p = sort(1/true_ranks) ascending — must use float ranks here
-    p = np.sort(1.0 / true_ranks)                             # ascending
-
-    # Lower-triangular matrix: mat[i, j] = p[j] for j ≤ i, else 0
-    mat = np.tile(p, (n, 1))
-    mat[np.triu_indices(n, k=1)] = 0.0
-
-    row_sums = mat.sum(axis=1)                                 # Savage scores
-    sorted_desc = np.sort(row_sums)[::-1]                     # descending
-
-    # R truncates float index to int (e.g. rank 2.5 → index 2 in R)
-    int_idx = np.floor(true_ranks).astype(int) - 1            # 0-based
-    return sorted_desc[int_idx]
-
-
-# ─────────────────────────────────────────────────────────────
-# 6.  Diagnostic table builder
-# ─────────────────────────────────────────────────────────────
-
-SCREEN_THRESHOLDS = (0.01, 0.05, 0.10)   # canonical GSA screening thresholds
-
-
-def build_table(sobol_vals: np.ndarray,
-                methods: dict,
-                params: list,
-                screen_thresholds: tuple = SCREEN_THRESHOLDS) -> pd.DataFrame:
-    """
-    Assemble the comparison table for an arbitrary set of estimators.
-
-    Parameters
-    ----------
-    sobol_vals        : length-k reference total-order indices (T_i)
-    methods           : {label: DataFrame-with-"value"-column}
-    params            : list of k parameter names
-    screen_thresholds : iterable of thresholds at which α and β are computed.
-                        Default: (0.01, 0.05, 0.10) — the three canonical
-                        GSA screening thresholds (conservative / standard /
-                        liberal).  Separate α/β rows are produced for each.
-
-    Summary rows appended per threshold θ:
-      ρ   — Savage-score rank correlation (threshold-independent)
-      MAE — mean absolute error          (threshold-independent)
-      α(θ) — false-positive rate: predicted important, truly unimportant
-      β(θ) — false-negative rate: predicted unimportant, truly important
-    """
-    sobol_vals   = np.asarray(sobol_vals, dtype=float)
-    method_names = list(methods.keys())
-    method_vals  = np.column_stack([methods[m]["value"].values
-                                    for m in method_names])
-
-    tab = np.column_stack([sobol_vals, method_vals])
-
-    def _rho(v):
-        if np.any(np.isnan(v)):
-            return np.nan
-        return abs(np.corrcoef(savage_scores_fun(sobol_vals),
-                               savage_scores_fun(v))[0, 1])
-
-    def _mae(v):
-        return float(np.nanmean(np.abs(v - sobol_vals)))
-
-    def _alpha_beta(v, thresh):
-        if np.any(np.isnan(v)):
-            return np.nan, np.nan
-        y_true = (sobol_vals > thresh).astype(int)
-        y_pred = (v > thresh).astype(int)
-        n_neg  = (y_true == 0).sum() or 1
-        n_pos  = (y_true == 1).sum() or 1
-        alpha  = ((y_pred == 1) & (y_true == 0)).sum() / n_neg
-        beta   = ((y_pred == 0) & (y_true == 1)).sum() / n_pos
-        return float(alpha), float(beta)
-
-    n_m = len(method_names)
-    rho_row = np.array([np.nan] + [_rho(method_vals[:, j]) for j in range(n_m)])
-    mae_row = np.array([np.nan] + [_mae(method_vals[:, j]) for j in range(n_m)])
-
-    summary_rows   = [rho_row, mae_row]
-    summary_labels = [r"$\rho$", "MAE"]
-
-    for thresh in screen_thresholds:
-        ab = [_alpha_beta(method_vals[:, j], thresh) for j in range(n_m)]
-        alpha_row = np.array([np.nan] + [a for a, _ in ab])
-        beta_row  = np.array([np.nan] + [b for _, b in ab])
-        summary_rows  += [alpha_row, beta_row]
-        tstr = str(thresh)
-        summary_labels += [rf"$\alpha({tstr})$", rf"$\beta({tstr})$"]
-
-    full = np.vstack([tab] + summary_rows)
-    row_labels = [f"${p}$" for p in params] + summary_labels
-
-    return pd.DataFrame(
-        np.round(full, 3),
-        index=row_labels,
-        columns=["T_i"] + method_names
-    )
-
-
-# ─────────────────────────────────────────────────────────────
-# 7.  Test functions
-# ─────────────────────────────────────────────────────────────
-
-def ishigami_fun(mat: np.ndarray) -> np.ndarray:
-    """
-    Ishigami function on [0,1]³ → internally maps to [-π, π]³.
-    f(x) = sin(x1) + 7 sin²(x2) + 0.1 x3⁴ sin(x1)
-    """
-    X = mat * (2 * np.pi) - np.pi
-    return (np.sin(X[:, 0])
-            + 7 * np.sin(X[:, 1]) ** 2
-            + 0.1 * X[:, 2] ** 4 * np.sin(X[:, 0]))
-
-
-def bratley1988_fun(mat: np.ndarray) -> np.ndarray:
-    """
-    Bratley (1988) function on [0,1]^k.
-    f(x) = Σ_{i=1}^k  (-1)^i · Π_{j=1}^i x_j
-    """
-    k = mat.shape[1]
-    signs = (-1) ** np.arange(1, k + 1)          # [-1, +1, -1, …]
-    cumprod = np.cumprod(mat, axis=1)             # shape (N, k)
-    return (signs * cumprod).sum(axis=1)
-
-
-def bratley1992_fun(mat: np.ndarray) -> np.ndarray:
-    """
-    Bratley-Fox-Niederreiter (1992) function on [0,1]^k.
-    f(x) = Σ_{s=1}^k  (-1)^s · Π_{j=1}^s (c_j · x_j)
-    with c_j = 2*(j+1) − 1  (i.e. 1, 3, 5, … for j=1,2,…)
-    (matches the sensobol::bratley1992_Fun convention)
-    """
-    k = mat.shape[1]
-    c = 2 * np.arange(1, k + 1) - 1              # 1, 3, 5, …
-    signs = (-1) ** np.arange(1, k + 1)
-    cumprod = np.cumprod(mat * c, axis=1)
-    return (signs * cumprod).sum(axis=1)
-
-
-def sobol_g_fun(mat: np.ndarray,
-                a: np.ndarray | None = None) -> np.ndarray:
-    """
-    Sobol g-function on [0,1]^k.
-    g(x) = Π_{i=1}^k  (|4 x_i − 2| + a_i) / (1 + a_i)
-    Default a = [0, 1, 4.5, 9, 99, 99, 99, 99] (k=8, Saltelli 2002).
-    """
-    k = mat.shape[1]
-    if a is None:
-        a = np.array([0, 1, 4.5, 9, 99, 99, 99, 99], dtype=float)
-    a = a[:k]
-    return np.prod((np.abs(4 * mat - 2) + a) / (1 + a), axis=1)
-
-
-def oakley_ohagan_fun(mat: np.ndarray) -> np.ndarray:
-    """
-    Oakley-O'Hagan (2004) function, 15-dimensional.
-    Inputs are in [0,1]^15 and transformed to N(0,1) internally.
-    Uses the coefficients from the original paper / sensobol package.
-    """
-    # Transform uniform [0,1] → standard normal
-    from scipy.stats import norm
-    X = norm.ppf(mat)
-
-    a1 = np.array([0.0118, 0.0456, 0.2297, 0.0393, 0.1177,
-                   0.3865, 0.3897, 0.6061, 0.6159, 0.4005,
-                   1.0741, 1.1474, 0.7880, 1.1242, 1.1982])
-    a2 = np.array([0.4341, 0.0887, 0.0512, 0.3233, 0.1489,
-                   1.0364, 0.9892, 0.9672, 0.8250, 0.6050,
-                   0.9556, 1.0318, 0.9280, 1.1200, 1.1700])
-    a3 = np.array([0.1044, 0.2057, 0.0774, 0.2730, 0.1253,
-                   0.7526, 0.8570, 0.9906, 1.0091, 0.8570,
-                   1.0197, 1.0890, 1.0146, 1.1500, 1.2000])
-    M  = np.diag([0.0005 + 0.0001 * i for i in range(15)])
-    M  = (M + M.T) / 2                          # symmetric (already diagonal here)
-
-    return (X @ a1
-            + np.sin(X) @ a2
-            + np.cos(X) @ a3
-            + np.einsum("bi,ij,bj->b", X, M, X))
-
-
-# ─────────────────────────────────────────────────────────────
-# 8.  "Play" model  (the mixed discrete/continuous model)
-# ─────────────────────────────────────────────────────────────
-
-def _inv_cdf_uniform(u, a=0.0, b=1.0):
-    return a + (b - a) * u
-
-
-def _inv_cdf_normal(u, mu=0.0, sigma=1.0):
-    """Quantile of truncated N(mu, sigma) on [0, 1]."""
-    return truncnorm.ppf(u,
-                         a=(0 - mu) / sigma,
-                         b=(1 - mu) / sigma,
-                         loc=mu, scale=sigma)
-
-
-def play_model(row: np.ndarray) -> float:
-    """
-    The 'Play' function from the R script (5 inputs).
-    row : [θ1, θ2, θ3, ξ, ζ]  all in [0,1]
-      ξ  (col 4) → discretised to {0,…,7}
-      ζ  (col 5) → rounded to {0, 1}
-    """
-    # columns 3 and 4 are already discretised before calling this function
-    # (mat[:,3] = floor(u*8) → 0…7;  mat[:,4] = round(u) → 0 or 1)
-    zeta = int(round(row[4]))      # 0 or 1
-    xi   = int(row[3])             # 0 … 7
-
-    if zeta == 1:
-        x1 = _inv_cdf_normal(row[0], mu=0.5, sigma=1/12)
-        x2 = _inv_cdf_normal(row[1], mu=0.5, sigma=1/12)
-        x3 = _inv_cdf_normal(row[2], mu=0.5, sigma=1/12)
+        raise ValueError("ties must be 'ordinal' or 'random'")
+    # column b = max(1, ceil((r - 1) s / N)), in exact integer arithmetic
+    # (floating-point ceil misplaces ranks that fall exactly on a block
+    # boundary for some N, e.g. N = 600, s = 25)
+    n = -((-(np.asarray(r, dtype=np.int64) - 1) * s) // N)
+    n[n == 0] = 1
+    return np.clip(n, 1, s) - 1
+
+
+def occupancy_grid(x: np.ndarray, y: np.ndarray, s: int,
+                   rank_y: bool = True, ties: str = "ordinal",
+                   rng: Optional[np.random.Generator] = None) -> np.ndarray:
+    """Binary s x s occupancy matrix of the pairs (x_j, y_j)."""
+    m = _row_index(np.asarray(x, float), s)
+    y = np.asarray(y, float)
+    if rank_y:
+        n = _rank_column_index(y, s, ties, rng)
+    else:                                   # min-max scaling (S-ersatz)
+        rngy = y.max() - y.min()
+        yn = (y - y.min()) / rngy if rngy > 0 else np.zeros_like(y)
+        n = np.ceil(yn * s).astype(int)
+        n[n == 0] = 1
+        n = np.clip(n, 1, s) - 1
+    G = np.zeros((s, s), dtype=np.int8)
+    G[m, n] = 1
+    return G
+
+
+_NEIGH_COUNT_CACHE: Dict[int, np.ndarray] = {}
+
+
+def _neighbour_counts(s: int) -> np.ndarray:
+    """Number of in-grid Moore neighbours of every cell (8/5/3)."""
+    if s not in _NEIGH_COUNT_CACHE:
+        c = np.full((s, s), 8, dtype=int)
+        c[0, :] = c[-1, :] = c[:, 0] = c[:, -1] = 5
+        c[0, 0] = c[0, -1] = c[-1, 0] = c[-1, -1] = 3
+        if s == 1:
+            c[:] = 0
+        _NEIGH_COUNT_CACHE[s] = c
+    return _NEIGH_COUNT_CACHE[s]
+
+
+def moore_fill(G: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+    """Non-cascading Moore-neighbourhood fill: an empty cell is set to 1
+    if the fraction of its in-grid Moore neighbours that are occupied
+    in the ORIGINAL grid G is >= threshold."""
+    s = G.shape[0]
+    P = np.pad(G.astype(int), 1)
+    nb = (P[:-2, :-2] + P[:-2, 1:-1] + P[:-2, 2:] +
+          P[1:-1, :-2] + P[1:-1, 2:] +
+          P[2:, :-2] + P[2:, 1:-1] + P[2:, 2:])
+    cnt = _neighbour_counts(s)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        frac = np.where(cnt > 0, nb / np.maximum(cnt, 1), 0.0)
+    fill = (G == 0) & (frac >= threshold - 1e-12)
+    out = G.copy()
+    out[fill] = 1
+    return out
+
+
+def grid_size(N: int, grid_exponent: float = 0.5) -> int:
+    """s = ceil(N ** alpha_g)."""
+    return max(1, int(math.ceil(N ** grid_exponent - 1e-12)))
+
+
+def ersatz_input(x: np.ndarray, y: np.ndarray, *, adjusted: bool = True,
+                 fill: bool = True, fill_threshold: float = 0.5,
+                 grid_exponent: float = 0.5, ties: str = "ordinal",
+                 rng: Optional[np.random.Generator] = None) -> float:
+    """Ersatz statistic of one input.
+
+    adjusted=False           : S-ersatz of Puy et al. (2024): min-max
+                               scaled output, no fill, s = ceil(sqrt N).
+    adjusted=True, fill=True : adjusted ersatz (this paper).
+    adjusted=True, fill=False: rank-transformed grid without fill (the
+                               'unfilled' statistic of the theory).
+    Returns the fraction of empty cells."""
+    N = len(y)
+    if not adjusted:
+        s = grid_size(N, 0.5)
+        G = occupancy_grid(x, y, s, rank_y=False)
+        return 1.0 - G.mean()
+    s = grid_size(N, grid_exponent)
+    G = occupancy_grid(x, y, s, rank_y=True, ties=ties, rng=rng)
+    if fill:
+        G = moore_fill(G, fill_threshold)
+    return 1.0 - G.mean()
+
+
+def ersatz_all(X: np.ndarray, Y: np.ndarray, **kw) -> np.ndarray:
+    """Ersatz statistic for every column of X."""
+    return np.array([ersatz_input(X[:, i], Y, **kw)
+                     for i in range(X.shape[1])])
+
+
+# =====================================================================
+# 3.  Polynomial chaos expansion (orthonormal basis, OLS, LOO degree)
+# =====================================================================
+
+def _orthonormal_1d(t: np.ndarray, p: int, family: str) -> np.ndarray:
+    """N x (p+1) table of orthonormal polynomials of degree 0..p.
+    family 'legendre': t ~ U(0,1);  'hermite': t ~ N(0,1)."""
+    N = len(t)
+    out = np.empty((N, p + 1))
+    out[:, 0] = 1.0
+    if family == "legendre":
+        x = 2.0 * t - 1.0
+        Pm1, P0 = np.ones(N), x
+        if p >= 1:
+            out[:, 1] = math.sqrt(3.0) * x
+        for n in range(1, p):
+            P1 = ((2 * n + 1) * x * P0 - n * Pm1) / (n + 1)
+            out[:, n + 1] = math.sqrt(2 * (n + 1) + 1) * P1
+            Pm1, P0 = P0, P1
+    elif family == "hermite":
+        Hm1, H0 = np.ones(N), t.copy()
+        if p >= 1:
+            out[:, 1] = t
+        for n in range(1, p):
+            H1 = t * H0 - n * Hm1
+            out[:, n + 1] = H1 / math.sqrt(math.factorial(n + 1))
+            Hm1, H0 = H0, H1
     else:
-        x1 = _inv_cdf_uniform(row[0])
-        x2 = _inv_cdf_uniform(row[1])
-        x3 = _inv_cdf_uniform(row[2])
-
-    formulas = {
-        0: (x1 + x2 + x3),
-        1: (x1 + x2 * x3),
-        2: (x1 * x2 + x3),
-        3: (x1 * x3 + x2),
-        4: (x1 * (x2 + x3)),
-        5: (x2 * (x1 + x3)),
-        6: (x3 * (x1 + x2)),
-        7: (x1 * x2 * x3),
-    }
-    return formulas[xi] ** (1/3)
+        raise ValueError(family)
+    return out
 
 
-# ─────────────────────────────────────────────────────────────
-# 9.  Analysis blocks
-# ─────────────────────────────────────────────────────────────
+def total_degree_indices(k: int, p: int) -> np.ndarray:
+    """All multi-indices alpha in N^k with |alpha| <= p (row 0 = 0)."""
+    out = [np.zeros(k, dtype=int)]
+    for deg in range(1, p + 1):
+        # compositions of deg into k non-negative parts
+        for bars in combinations(range(deg + k - 1), k - 1):
+            prev, a = -1, []
+            for b in bars:
+                a.append(b - prev - 1)
+                prev = b
+            a.append(deg + k - 1 - prev - 1)
+            out.append(np.array(a, dtype=int))
+    return np.array(out)
 
-def _run_study(name: str, N: int, params: list,
-               Y_sob: np.ndarray | None,
-               Y_dis: np.ndarray,
-               mat_dis: np.ndarray,
-               mat_sob: np.ndarray | None,
-               sobol_true: np.ndarray | None = None,
-               pce_order: int = 3,
-               pawn_bins: int = 10) -> pd.DataFrame:
-    """
-    Core routine shared by every study.
 
-    Computes:
-      • Jansen T_i (reference, from mat_sob) or uses sobol_true
-      • Unadjusted ersatz discrepancy
-      • Adjusted ersatz discrepancy
-      • PCE total-order indices  (chaospy, U[0,1] inputs assumed)
-      • PAWN maximum-KS proxy    (Pianosi & Wagener 2015)
-
-    All methods receive the same mat_dis (N × k, uniform [0,1]) and
-    the same Y_dis, so computational cost is identical across methods.
-    """
-    print(f"\n{'='*60}")
-    print(f"  {name}")
-    print(f"{'='*60}")
-
-    # ── Reference T_i ─────────────────────────────────────────────
-    if sobol_true is not None:
-        sobol_vals = sobol_true
-    elif Y_sob is not None and mat_sob is not None:
-        sob_df = jansen_fun(Y_sob, N, params)
-        sobol_vals = sob_df["value"].values
+def _pce_design(U: np.ndarray, alphas: np.ndarray,
+                family: str) -> np.ndarray:
+    N, k = U.shape
+    p = int(alphas.max()) if alphas.size else 0
+    if family == "hermite":
+        T = norm.ppf(np.clip(U, 1e-12, 1 - 1e-12))
     else:
-        raise ValueError("Need either sobol_true or (mat_sob, Y_sob)")
-
-    # ── All single-sample estimators on (mat_dis, Y_dis) ──────────
-    # PCE is fitted once internally via _fit_pce; T_i and Shapley reuse
-    # the same coefficients so there is no double regression cost.
-    dis      = discrepancy_ersatz(mat_dis, Y_dis, params, adj=0)
-    dis_adj  = discrepancy_ersatz(mat_dis, Y_dis, params, adj=1)
-    pce      = pce_total_indices(mat_dis, Y_dis, params, order=pce_order)
-    shapley  = pce_shapley_indices(mat_dis, Y_dis, params, order=pce_order)
-    pawn     = pawn_total_indices(mat_dis, Y_dis, params, n_bins=pawn_bins)
-
-    methods = {"ersatz":      dis,
-               "ersatz_adj":  dis_adj,
-               "PCE":         pce,
-               "Shapley":     shapley,
-               "PAWN(max-KS)": pawn}
-
-    tab = build_table(sobol_vals, methods, params)
-    print(tab.to_string())
-    return tab
-
-
-# ─────────────────────────────────────────────────────────────
-# 10.  Main
-# ─────────────────────────────────────────────────────────────
-
-
-# ─────────────────────────────────────────────────────────────
-# 11.  random_distributions_fun  (random_distributions_fun.R)
-# ─────────────────────────────────────────────────────────────
-from scipy.stats import norm as _norm, beta as _beta
-from scipy.special import logit as _logit, expit as _expit
-
-
-def _truncated_normal(x, lo=0.0, hi=1.0, mean=0.5, sd=0.15):
-    """
-    Inverse-CDF of N(mean, sd) truncated to [lo, hi].
-    Equivalent to R's truncated_normal(x, lo, hi, mean, sd).
-    """
-    a = _norm.cdf(lo, mean, sd)
-    b = _norm.cdf(hi, mean, sd)
-    u = a + (b - a) * x          # rescale uniform to [a, b]
-    return _norm.ppf(u, mean, sd)
-
-
-def _truncated_beta(x, lo=0.0, hi=1.0, shape1=2.0, shape2=2.0):
-    """
-    Inverse-CDF of Beta(shape1, shape2) truncated to [lo, hi].
-    Equivalent to R's truncated_beta(x, lo, hi, shape1, shape2).
-    """
-    a = _beta.cdf(lo, shape1, shape2)
-    b = _beta.cdf(hi, shape1, shape2)
-    u = a + (b - a) * x
-    return _beta.ppf(u, shape1, shape2)
-
-
-def _truncated_logitnorm(x, lo=0.0, hi=1.0, mu=0.0, sigma=3.16):
-    """
-    Inverse-CDF of LogitNormal(mu, sigma) truncated to [lo, hi].
-    The logitnormal CDF is F(y) = Phi((logit(y) - mu) / sigma).
-    Equivalent to R's truncated_logitnorm via the logitnorm package.
-
-    Note: lo=0 and hi=1 are the natural bounds of the logitnormal,
-    so the truncation collapses to the full distribution.
-    """
-    # CDF at boundaries (guard against logit(0) = -inf, logit(1) = +inf)
-    eps = 1e-10
-    a = _norm.cdf((_logit(max(lo, eps)) - mu) / sigma)
-    b = _norm.cdf((_logit(min(hi, 1 - eps)) - mu) / sigma)
-    u = a + (b - a) * x
-    return _expit(mu + sigma * _norm.ppf(u))
-
-
-# The 7 named distribution families, indexed 1–7 (phi parameter).
-# phi = 8 → each column independently draws from one of the 7 at random.
-_SAMPLE_DISTRIBUTIONS = [
-    lambda x: x,                                          # 1: uniform
-    lambda x: _truncated_normal(x, 0, 1, 0.5, 0.15),     # 2: truncated normal
-    lambda x: _truncated_beta(x, 0, 1, 8, 2),            # 3: beta(8,2)
-    lambda x: _truncated_beta(x, 0, 1, 2, 8),            # 4: beta(2,8)
-    lambda x: _truncated_beta(x, 0, 1, 2, 0.8),          # 5: beta(2,0.8)
-    lambda x: _truncated_beta(x, 0, 1, 0.8, 2),          # 6: beta(0.8,2)
-    lambda x: _truncated_logitnorm(x, 0, 1, 0, 3.16),    # 7: logitnormal
-]
-
-
-def random_distributions_fun(X: np.ndarray, phi: int,
-                              rng: np.random.Generator | None = None
-                              ) -> np.ndarray:
-    """
-    Apply a distribution transform to a [0,1] matrix X.
-
-    phi : 1–7  → apply the same distribution to ALL columns
-          8    → randomly assign one of the 7 distributions per column
-
-    Mirrors R's random_distributions_fun (random_distributions_fun.R).
-    """
-    X = np.asarray(X, dtype=float)
-    n_dist = len(_SAMPLE_DISTRIBUTIONS)
-
-    if phi != n_dist + 1:        # phi 1–7: single distribution
-        fn = _SAMPLE_DISTRIBUTIONS[phi - 1]
-        return fn(X)
-    else:                        # phi 8: one random dist per column
-        if rng is None:
-            rng = np.random.default_rng()
-        chosen = rng.integers(0, n_dist, size=X.shape[1])
-        out = X.copy()
-        for col, idx in enumerate(chosen):
-            out[:, col] = _SAMPLE_DISTRIBUTIONS[idx](X[:, col])
-        return out
-
-
-# ─────────────────────────────────────────────────────────────
-# 12.  discrepancy_wrapper_fun  (discrepancy_fun.R)
-# ─────────────────────────────────────────────────────────────
-
-def discrepancy_wrapper_fun(mat: np.ndarray, Y: np.ndarray,
-                             params: list,
-                             type: str = "adjusted",
-                             fill_threshold: float = 0.5,
-                             grid_exponent: float = 0.5) -> pd.DataFrame:
-    """
-    Wrapper matching R's discrepancy_wrapper_fun() signature.
-
-    type           : 'adjusted' → s_ersatz_adj; 'not.adjusted' → s_ersatz
-    fill_threshold : Moore-fill threshold (default 0.5); passed to adj only
-    grid_exponent  : grid resolution exponent (default 0.5); passed to adj
-
-    Note: mat must be the RAW [0,1] Sobol design (not distribution-
-    transformed), while Y is the model output on the transformed inputs.
-    """
-    if type not in ("adjusted", "not.adjusted"):
-        raise ValueError("type must be 'adjusted' or 'not.adjusted'")
-
-    adj = 0 if type == "not.adjusted" else 1
-    return discrepancy_ersatz(mat, Y, params, adj=adj,
-                              fill_threshold=fill_threshold,
-                              grid_exponent=grid_exponent)
-
-
-# ─────────────────────────────────────────────────────────────
-# 13.  Becker metafunction  (sensobol::metafunction)
-# ─────────────────────────────────────────────────────────────
-
-def metafunction(data: np.ndarray, epsilon: int) -> np.ndarray:
-    """
-    Becker (2020) random test function evaluated on `data`.
-
-    Faithfully replicates the structure of sensobol::metafunction():
-      - Uses epsilon as the RNG seed.
-      - Each column of data gets a randomly chosen univariate basis
-        function drawn from {x, x², x³, sin(πx), cos(πx), exp(x),
-        |2x-1|}.
-      - Coefficients for 1st-order terms are drawn from N(0,1).
-      - A random subset of pairwise 2nd-order interaction terms is
-        included with N(0,1) coefficients.
-      - All terms are z-scored before summation so output variance ≈ 1.
-
-    Parameters
-    ----------
-    data    : N × k matrix with values in [0, 1]
-    epsilon : integer seed (mirrors sensobol's epsilon argument)
-
-    Returns
-    -------
-    length-N output vector
-    """
-    rng = np.random.default_rng(epsilon)
-    N, k = data.shape
-
-    # ── Basis functions (7 choices, matching sensobol's set) ──────
-    bases = [
-        lambda x: x,
-        lambda x: x ** 2,
-        lambda x: x ** 3,
-        lambda x: np.sin(np.pi * x),
-        lambda x: np.cos(np.pi * x),
-        lambda x: np.exp(x),
-        lambda x: np.abs(2 * x - 1),
-    ]
-
-    # ── 1st-order terms ────────────────────────────────────────────
-    chosen_bases = rng.integers(0, len(bases), size=k)
-    alphas = rng.standard_normal(k)
-
-    phi_X = np.column_stack([bases[chosen_bases[j]](data[:, j])
-                              for j in range(k)])          # N × k
-
-    y = phi_X @ alphas                                     # length-N
-
-    # ── 2nd-order interaction terms (random subset of pairs) ──────
-    all_pairs = [(i, j) for i in range(k) for j in range(i + 1, k)]
-    n_pairs   = max(1, rng.integers(1, len(all_pairs) + 1))
-    pair_idx  = rng.choice(len(all_pairs), size=n_pairs, replace=False)
-    betas     = rng.standard_normal(n_pairs)   # draw all at once (same sequence)
-
-    for idx, pi in enumerate(pair_idx):
-        i, j = all_pairs[pi]
-        y += betas[idx] * phi_X[:, i] * phi_X[:, j]
-
-    # ── Standardise output ─────────────────────────────────────────
-    std = y.std()
-    if std > 0:
-        y = (y - y.mean()) / std
-
-    return y
-
-
-# ─────────────────────────────────────────────────────────────
-# 14.  triggers_fun  (triggers_fun.R)
-# ─────────────────────────────────────────────────────────────
-
-def triggers_fun(tau: int, epsilon: int, base_sample_size: int,
-                 cost_discrepancy: int, phi: int, k: int) -> np.ndarray:
-    """
-    Orchestrate one Monte Carlo run of the Becker metafunction study.
-
-    Parameters  (match R's triggers_fun arguments)
-    ----------
-    tau               : 1 → random uniform sampling, 2 → QRN (Sobol)
-    epsilon           : seed for both the sample matrix and metafunction
-    base_sample_size  : N for the Jansen estimator
-    cost_discrepancy  : N for the discrepancy estimator (= base*( k+1))
-    phi               : distribution family index 1–8
-    k                 : number of model inputs
-
-    Returns
-    -------
-    16-element array (4 methods × 4 metrics), ordered:
-      rho   : [adj, nonadj, pce, pawn]
-      MAE   : [adj, nonadj, pce, pawn]
-      alpha : [adj, nonadj, pce, pawn]
-      beta  : [adj, nonadj, pce, pawn]
-
-    Mirrors R's triggers_fun() (triggers_fun.R), extended with PCE and PAWN.
-    """
-    params = [f"X{i}" for i in range(1, k + 1)]
-    type_ = "R" if tau == 1 else "QRN"
-
-    # ── Discrepancy branch: matrix A only ─────────────────────────
-    mat_uniform = sobol_mat(N=cost_discrepancy, params=params,
-                            matrices=("A",), type_=type_, seed=epsilon)
-
-    # Transformed inputs for model evaluation (distribution-shifted)
-    rng_phi = np.random.default_rng(epsilon)
-    mat_transformed = random_distributions_fun(
-        sobol_mat(N=cost_discrepancy, params=params,
-                  matrices=("A",), type_=type_, seed=epsilon),
-        phi=phi, rng=rng_phi)
-
-    Y_disc = metafunction(mat_transformed, epsilon=epsilon)
-
-    disc_adj    = discrepancy_wrapper_fun(mat_uniform, Y_disc,
-                                         params, type="adjusted")
-    disc_nonadj = discrepancy_wrapper_fun(mat_uniform, Y_disc,
-                                         params, type="not.adjusted")
-
-    # ── Jansen branch: matrices A + AB ────────────────────────────
-    rng_j = np.random.default_rng(epsilon)
-    mat_jansen_raw = sobol_mat(N=base_sample_size, params=params,
-                               matrices=("A", "AB"), type_=type_,
-                               seed=epsilon)
-    mat_jansen = random_distributions_fun(mat_jansen_raw, phi=phi, rng=rng_j)
-    Y_jansen   = metafunction(mat_jansen, epsilon=epsilon)
-    ind_jansen = jansen_fun(Y_jansen, base_sample_size, params)
-
-    # ── PCE T_i, Shapley, and PAWN on the same uniform design ───
-    # _fit_pce is called once internally; T_i and Shapley share the fit.
-    pce_res   = pce_total_indices(mat_uniform, Y_disc, params)
-    shap_res  = pce_shapley_indices(mat_uniform, Y_disc, params)
-    pawn_res  = pawn_total_indices(mat_uniform, Y_disc, params)
-
-    # ── Compare all methods via Savage-score correlation vs Jansen ──
-    jansen_vals = ind_jansen["value"].values
-    adj_vals    = disc_adj["value"].values
-    nonadj_vals = disc_nonadj["value"].values
-    pce_vals    = pce_res["value"].values
-    shap_vals   = shap_res["value"].values
-    pawn_vals   = pawn_res["value"].values
-
-    def _rho(a, b):
-        # R uses cor() which returns signed Pearson correlation.
-        # Negative values indicate rank reversal and are meaningful;
-        # do NOT take abs() here to preserve consistency with R output.
-        if np.any(np.isnan(a)) or np.any(np.isnan(b)):
-            return np.nan
-        return float(np.corrcoef(savage_scores_fun(a), savage_scores_fun(b))[0, 1])
-
-    def _errors(pred_vals, true_vals, threshold=0.05):
-        if np.any(np.isnan(pred_vals)):
-            return np.nan, np.nan
-        y_pred = (pred_vals  > threshold).astype(int)
-        y_true = (true_vals  > threshold).astype(int)
-        n_neg  = (y_true == 0).sum() or 1
-        n_pos  = (y_true == 1).sum() or 1
-        alpha  = ((y_pred == 1) & (y_true == 0)).sum() / n_neg
-        beta   = ((y_pred == 0) & (y_true == 1)).sum() / n_pos
-        return float(alpha), float(beta)
-
-    rho_adj    = float(_rho(jansen_vals, adj_vals))
-    rho_nonadj = float(_rho(jansen_vals, nonadj_vals))
-    rho_pce    = float(_rho(jansen_vals, pce_vals))
-    rho_shap   = float(_rho(jansen_vals, shap_vals))
-    rho_pawn   = float(_rho(jansen_vals, pawn_vals))
-
-    mae_adj    = float(np.nanmean(np.abs(adj_vals    - jansen_vals)))
-    mae_nonadj = float(np.nanmean(np.abs(nonadj_vals - jansen_vals)))
-    mae_pce    = float(np.nanmean(np.abs(pce_vals    - jansen_vals)))
-    mae_shap   = float(np.nanmean(np.abs(shap_vals   - jansen_vals)))
-    mae_pawn   = float(np.nanmean(np.abs(pawn_vals   - jansen_vals)))
-
-    alpha_adj,    beta_adj    = _errors(adj_vals,    jansen_vals)
-    alpha_nonadj, beta_nonadj = _errors(nonadj_vals, jansen_vals)
-    alpha_pce,    beta_pce    = _errors(pce_vals,    jansen_vals)
-    alpha_shap,   beta_shap   = _errors(shap_vals,   jansen_vals)
-    alpha_pawn,   beta_pawn   = _errors(pawn_vals,   jansen_vals)
-
-    return np.array([rho_adj,   rho_nonadj,   rho_pce,   rho_shap,   rho_pawn,
-                     mae_adj,   mae_nonadj,   mae_pce,   mae_shap,   mae_pawn,
-                     alpha_adj, alpha_nonadj, alpha_pce, alpha_shap, alpha_pawn,
-                     beta_adj,  beta_nonadj,  beta_pce,  beta_shap,  beta_pawn])
-
-
-# ─────────────────────────────────────────────────────────────
-# 15.  PCE and PAWN total-effect estimators
-# ─────────────────────────────────────────────────────────────
-import chaospy as cp
-from scipy.stats import ks_2samp as _ks_2samp
-
-
-def _fit_pce(mat_uniform: np.ndarray, Y: np.ndarray,
-             order: int = 3):
-    """
-    Internal helper: fit a PCE and return (coeffs, exponents, var_total).
-    Returns (None, None, None) if the design is underdetermined.
-
-    Shared by pce_total_indices and pce_shapley_indices so the regression
-    is done only once when both are called on the same (mat, Y).
-    """
-    k = mat_uniform.shape[1]
-    dists = cp.J(*[cp.Uniform(0, 1) for _ in range(k)])
-
-    max_terms  = 150          # hard speed cap
-    used_order = order
-    while used_order >= 1:
-        expansion = cp.generate_expansion(used_order, dists)
-        n_terms   = len(expansion)
-        # Require N ≥ 10×n_terms for stable regression
-        if mat_uniform.shape[0] >= 10 * n_terms and n_terms <= max_terms:
-            break
-        used_order -= 1
-
-    if used_order < 1:
-        return None, None, None
-
-    expansion = cp.generate_expansion(used_order, dists)
-    try:
-        approx    = cp.fit_regression(expansion, mat_uniform.T, Y)
-        coeffs    = np.asarray(approx.coefficients, dtype=float)  # (n_terms,)
-        exponents = approx.exponents                              # (n_terms, k)
-        var_total = float(np.sum(coeffs[1:] ** 2))
-        return coeffs, exponents, var_total
-    except Exception:
-        return None, None, None
-
-
-def pce_total_indices(mat_uniform: np.ndarray, Y: np.ndarray,
-                      params: list, order: int = 3) -> pd.DataFrame:
-    """
-    Fit a PCE on a U[0,1]^k design and return total-order Sobol indices.
-
-    T_i = Σ_{α: α_i > 0} c_α² / Var(Y_PCE)   (Sudret 2008, exact within
-    the truncated expansion, no numerical integration required).
-
-    The expansion order is automatically reduced when N is too small.
-    Returns NaN for all indices if even order=1 is underdetermined.
-
-    Parameters
-    ----------
-    mat_uniform : N × k design matrix, values in [0, 1]
-    Y           : length-N model output vector
-    params      : list of k parameter names
-    order       : maximum polynomial order (default 3)
-
-    Returns
-    -------
-    DataFrame with columns ['params', 'value']
-    """
-    k = mat_uniform.shape[1]
-    coeffs, exponents, var_total = _fit_pce(mat_uniform, Y, order)
-
-    if coeffs is None or var_total == 0:
-        return pd.DataFrame({"params": params, "value": np.full(k, np.nan)})
-
-    indices = np.array([
-        np.sum(coeffs[exponents[:, j] > 0] ** 2) / var_total
-        for j in range(k)
-    ])
-    return pd.DataFrame({"params": params, "value": np.clip(indices, 0, None)})
-
-
-def pce_shapley_indices(mat_uniform: np.ndarray, Y: np.ndarray,
-                        params: list, order: int = 3) -> pd.DataFrame:
-    """
-    Compute Shapley effects from PCE coefficients (exact for independent
-    U[0,1] inputs; Owen 2014).
-
-    For independent inputs the Shapley effect of variable i is:
-
-        Sh_i = (1 / Var(Y_PCE)) × Σ_{α: α_i > 0}
-               [(|supp(α)| − 1)! (k − |supp(α)|)! / k!] × c_α²
-
-    where supp(α) = {j : α_j > 0} is the support of basis polynomial α.
-    This weight is the classical Shapley weight w(s, k) = (s-1)!(k-s)!/k!
-    applied to each pure-variance term D_{supp(α)} = c_α².
-
-    Key properties:
-      • Σ_i Sh_i = 1  (efficiency — unlike T_i which sums to ≥ 1)
-      • Sh_i = 0 iff variable i has no effect at any interaction order
-      • Sh_i ≥ S_i  (Shapley ≥ first-order Sobol)
-      • Ranking of Sh_i and T_i coincides for additive functions;
-        they diverge when interactions are asymmetric across variables.
-
-    The same PCE fit as pce_total_indices is reused (via _fit_pce) so
-    calling both functions doubles no computation.
-
-    Returns NaN for all indices if the PCE is underdetermined.
-
-    Parameters
-    ----------
-    mat_uniform : N × k design matrix, values in [0, 1]
-    Y           : length-N model output vector
-    params      : list of k parameter names
-    order       : maximum polynomial order (default 3)
-
-    Returns
-    -------
-    DataFrame with columns ['params', 'value']
-    """
-    k = mat_uniform.shape[1]
-    coeffs, exponents, var_total = _fit_pce(mat_uniform, Y, order)
-
-    if coeffs is None or var_total == 0:
-        return pd.DataFrame({"params": params, "value": np.full(k, np.nan)})
-
-    # For independent inputs the aggregated Shapley weight per ANOVA term
-    # D_u = c_alpha^2 (with supp(alpha) = u exactly) simplifies to 1/|u|.
-    # Proof: summing |S|!(k-|S|-1)!/k! over all S with u\{i} ⊆ S ⊆ [k]\{i}
-    # yields 1/|u| for any u containing i (combinatorial identity).
-    # This ensures the efficiency axiom: sum_i Sh_i = 1.
-    shapley = np.zeros(k)
-    for t in range(1, len(coeffs)):           # skip constant term (index 0)
-        support = np.where(exponents[t] > 0)[0]
-        s       = len(support)
-        # Each variable in the support receives an equal share 1/s
-        contribution = coeffs[t] ** 2 / s
-        for j in support:
-            shapley[j] += contribution
-
-    shapley = np.clip(shapley / var_total, 0.0, None)
-    return pd.DataFrame({"params": params, "value": shapley})
-
-
-def pawn_total_indices(mat_uniform: np.ndarray, Y: np.ndarray,
-                       params: list, n_bins: int = 10) -> pd.DataFrame:
-    """
-    PAWN max-KS screening measure.
-
-    Computes the maximum Kolmogorov–Smirnov distance between the
-    unconditional output CDF F(Y) and the conditional CDF F(Y | x_j ∈ bin)
-    over equal-width bins of x_j.  This is a valid sensitivity screening
-    measure but differs from canonical PAWN in several respects:
-
-    Canonical PAWN (Pianosi & Wagener 2015) typically:
-      • Conditions on quantile-based (not equal-width) slices
-      • Reports the median or mean KS across slices (not always max)
-      • May use bootstrapping for uncertainty
-
-    This implementation uses equal-width bins (appropriate for uniform
-    inputs) and takes the maximum KS across bins.  It is therefore more
-    accurately labelled "PAWN (max-KS)" — a valid screening index
-    correlated with T_i but not numerically equivalent to the published
-    PAWN formulation.
-
-    Parameters
-    ----------
-    mat_uniform : N × k design matrix with values in [0, 1]
-    Y           : length-N model output vector
-    params      : list of k parameter names
-    n_bins      : number of equal-width bins along each input axis
-
-    Returns
-    -------
-    DataFrame with columns ['params', 'value']
-    """
-    N, k = mat_uniform.shape
-    values = []
-    edges  = np.linspace(0.0, 1.0, n_bins + 1)
-
+        T = U
+    tabs = [_orthonormal_1d(T[:, j], p, family) for j in range(k)]
+    Psi = np.ones((N, len(alphas)))
     for j in range(k):
-        xj = mat_uniform[:, j]
-        ks_stats = []
-        for lo, hi in zip(edges[:-1], edges[1:]):
-            mask = (xj >= lo) & (xj < hi)
-            if mask.sum() > 1:
-                ks_stats.append(_ks_2samp(Y, Y[mask]).statistic)
-        values.append(float(np.max(ks_stats)) if ks_stats else 0.0)
-
-    return pd.DataFrame({"params": params, "value": values})
-
-# ─────────────────────────────────────────────────────────────
-# 16.  Module-level worker for Becker multiprocessing pool
-# ─────────────────────────────────────────────────────────────
-def _run_one(args):
-    """Single Becker metafunction run; must be at module level for pickling."""
-    _i, tau, eps, base, cost, phi, k = args
-    try:
-        return triggers_fun(tau, eps, base, cost, phi, k)
-    except Exception:
-        return np.full(20, np.nan)
+        aj = alphas[:, j]
+        if np.any(aj > 0):
+            Psi *= tabs[j][:, aj]
+    return Psi
 
 
+def pce_fit(U: np.ndarray, Y: np.ndarray, family: str = "legendre",
+            pmax: int = 10, min_ratio: float = 2.0,
+            max_terms: int = 1000) -> Optional[dict]:
+    """Degree-adaptive full total-degree PCE by ordinary least squares.
 
-# ─────────────────────────────────────────────────────────────
-# 17.  Sensitivity-of-Sensitivity (SoS) study
-# ─────────────────────────────────────────────────────────────
-#
-# The SoS study is a *global* sensitivity analysis of the sensitivity
-# analysis method itself.  All five method-level parameters are varied
-# simultaneously in a Sobol quasi-random design; Jansen T_i are then
-# computed on the scalar output metrics (ρ, α, β) to rank the SoS
-# parameters by importance.
-#
-# SoS parameters (all varied together):
-#   fill_threshold  ∈ [0.25, 0.75]  — Moore-neighbourhood fill threshold
-#   grid_exponent   ∈ [0.40, 0.60]  — grid resolution (s = ceil(N^α))
-#   screen_threshold∈ [0.01, 0.10]  — α/β classification threshold
-#   pawn_bins       ∈ [5,    20]    — PAWN bins (cast to int)
-#   tau_sampling    ∈ {1, 2}        — 1=random, 2=QRN (cast to int)
-#
-# Design: outer Sobol N_sos × (k_sos+1) Jansen matrix, using a fixed
-# Becker cache of N_cache inner model runs.  For each outer point the
-# discrepancy/PAWN parameters are varied and metrics recomputed on the
-# cached (mat, Y, jansen_vals) tuples — no new model evaluations.
-#
-# Key insight: since fill_threshold, grid_exponent, screen_threshold and
-# pawn_bins all apply *post-hoc* to stored model output, the SoS outer
-# loop is cheap (microseconds per inner evaluation), allowing N_sos = 2^7
-# with N_cache = 128 inner runs in a few minutes on a single core.
+    For p = 1, 2, ... the full basis of total degree p is fitted while
+    the number of terms P satisfies N >= min_ratio * P and P <= max_terms;
+    the degree with the smallest corrected leave-one-out error
+    (Blatman & Sudret 2010) is retained.  Returns None if not even p=1
+    is admissible."""
+    N, k = U.shape
+    Y = np.asarray(Y, float)
+    vy = Y.var()
+    best = None
+    for p in range(1, pmax + 1):
+        P = math.comb(k + p, p)
+        if N < min_ratio * P or P > max_terms:
+            break
+        alphas = total_degree_indices(k, p)
+        Psi = _pce_design(U, alphas, family)
+        Q, R = np.linalg.qr(Psi, mode="reduced")
+        if np.min(np.abs(np.diag(R))) < 1e-10 * np.max(np.abs(np.diag(R))):
+            continue
+        coef = np.linalg.solve(R, Q.T @ Y)
+        h = np.sum(Q ** 2, axis=1)
+        resid = Y - Psi @ coef
+        if np.any(h > 1 - 1e-8) or vy == 0:
+            continue
+        err = np.mean((resid / (1 - h)) ** 2) / vy
+        Rinv = np.linalg.solve(R, np.eye(P))
+        trC = N * np.sum(Rinv ** 2)                  # tr((Psi'Psi/N)^-1)
+        err *= (N / (N - P)) * (1 + trC / N)
+        if best is None or err < best["loo"]:
+            best = dict(p=p, alphas=alphas, coef=coef, loo=err)
+    return best
 
-SOS_PARAM_NAMES = [
-    "fill_threshold",
-    "grid_exponent",
-    "screen_threshold",
-    "pawn_bins",
-    "tau_sampling",
-]
 
-SOS_PARAM_BOUNDS = {
-    "fill_threshold":   (0.25, 0.75),
-    "grid_exponent":    (0.40, 0.60),
-    "screen_threshold": (0.01, 0.10),
-    "pawn_bins":        (5.0,  20.0),   # floor to int at use; mirrors PAWN n_bins
-    "tau_sampling":     (1.0,   2.0),   # floor to int at use; matches R tau ∈ {1,2}
+def pce_indices(U: np.ndarray, Y: np.ndarray, family: str = "legendre",
+                **kw) -> Tuple[np.ndarray, np.ndarray, Optional[dict]]:
+    """(T_i, Shapley_i, fit) from the PCE; NaNs if the fit fails."""
+    k = U.shape[1]
+    fit = pce_fit(U, Y, family=family, **kw)
+    if fit is None:
+        return np.full(k, np.nan), np.full(k, np.nan), None
+    a, c = fit["alphas"][1:], fit["coef"][1:]
+    var = np.sum(c ** 2)
+    if var <= 0:
+        return np.zeros(k), np.zeros(k), fit
+    c2 = c ** 2
+    supp = (a > 0)
+    card = supp.sum(axis=1)
+    T = np.array([c2[supp[:, i]].sum() for i in range(k)]) / var
+    Sh = np.array([(c2[supp[:, i]] / card[supp[:, i]]).sum()
+                   for i in range(k)]) / var
+    return T, Sh, fit
+
+
+# =====================================================================
+# 4.  PAWN, given-data version (Pianosi & Wagener 2018), max-KS
+# =====================================================================
+
+def pawn_given_data(U: np.ndarray, Y: np.ndarray, n_bins: int = 10,
+                    stat: str = "max") -> np.ndarray:
+    """KS distance between the unconditional output sample and the
+    output sub-samples conditional on n_bins equal-width (= equiprobable,
+    inputs being uniform) intervals of each input; aggregated with
+    `stat` ('max' or 'median') over the intervals."""
+    N, k = U.shape
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    out = np.empty(k)
+    for i in range(k):
+        b = np.clip(np.searchsorted(edges, U[:, i], side="right") - 1,
+                    0, n_bins - 1)
+        ks = [ks_2samp(Y, Y[b == j]).statistic
+              for j in range(n_bins) if np.sum(b == j) > 1]
+        if not ks:
+            out[i] = np.nan
+        else:
+            out[i] = np.max(ks) if stat == "max" else np.median(ks)
+    return out
+
+
+# =====================================================================
+# 5.  Savage scores and agreement metrics
+# =====================================================================
+
+def savage_scores(x: np.ndarray) -> np.ndarray:
+    """Savage scores (Iman & Conover 1987): the input of rank r (1 = most
+    important) receives sum_{j=r}^{k} 1/j; tied inputs receive the
+    average of their scores."""
+    x = np.asarray(x, float)
+    k = len(x)
+    base = np.array([np.sum(1.0 / np.arange(r, k + 1))
+                     for r in range(1, k + 1)])
+    order = np.argsort(-x, kind="mergesort")
+    sc = np.empty(k)
+    sc[order] = base
+    # average over ties
+    for v in np.unique(x):
+        idx = np.where(x == v)[0]
+        if len(idx) > 1:
+            sc[idx] = sc[idx].mean()
+    return sc
+
+
+def savage_rho(est: np.ndarray, ref: np.ndarray) -> float:
+    """Signed Pearson correlation of Savage scores; NaN if undefined."""
+    est, ref = np.asarray(est, float), np.asarray(ref, float)
+    if np.any(~np.isfinite(est)) or np.any(~np.isfinite(ref)):
+        return np.nan
+    a, b = savage_scores(est), savage_scores(ref)
+    if a.std() == 0 or b.std() == 0:
+        return np.nan
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def screening_errors(est: np.ndarray, ref: np.ndarray, theta: float
+                     ) -> Tuple[float, float]:
+    """(alpha, beta) at threshold theta: alpha = share of truly
+    non-influential inputs (ref <= theta) flagged as influential
+    (est > theta); beta = share of truly influential inputs missed.
+    NaN when the corresponding class is empty."""
+    est, ref = np.asarray(est, float), np.asarray(ref, float)
+    if np.any(~np.isfinite(est)):
+        return np.nan, np.nan
+    neg, pos = ref <= theta, ref > theta
+    a = np.mean(est[neg] > theta) if neg.any() else np.nan
+    b = np.mean(est[pos] <= theta) if pos.any() else np.nan
+    return float(a), float(b)
+
+
+def summary_metrics(est: np.ndarray, ref: np.ndarray,
+                    thetas: Sequence[float] = (0.01, 0.05, 0.10)) -> dict:
+    out = {"rho": savage_rho(est, ref),
+           "mae": float(np.mean(np.abs(np.asarray(est) - ref)))
+           if np.all(np.isfinite(est)) else np.nan}
+    for t in thetas:
+        a, b = screening_errors(est, ref, t)
+        out[f"alpha_{t:.2f}"] = a
+        out[f"beta_{t:.2f}"] = b
+    return out
+
+
+# =====================================================================
+# 6.  Benchmark functions (definitions as in R package sensobol)
+# =====================================================================
+
+def bratley1988(U: np.ndarray) -> np.ndarray:
+    """Bratley & Fox (1988): prod_i |4 x_i - 2| (sensobol::bratley1988_Fun)."""
+    return np.prod(np.abs(4.0 * U - 2.0), axis=1)
+
+
+def bratley1992(U: np.ndarray) -> np.ndarray:
+    """Bratley, Fox & Niederreiter (1992): sum_i (-1)^i prod_{j<=i} x_j
+    (sensobol::bratley1992_Fun)."""
+    k = U.shape[1]
+    return (np.cumprod(U, axis=1) * (-1.0) ** np.arange(1, k + 1)).sum(1)
+
+
+def ishigami(U: np.ndarray, a: float = 7.0, b: float = 0.1) -> np.ndarray:
+    """Ishigami & Homma (1990), inputs U(-pi, pi), a = 7, b = 0.1."""
+    X = U * 2.0 * np.pi - np.pi
+    return (np.sin(X[:, 0]) + a * np.sin(X[:, 1]) ** 2
+            + b * X[:, 2] ** 4 * np.sin(X[:, 0]))
+
+
+SOBOL_G_A = np.array([0, 1, 4.5, 9, 99, 99, 99, 99], float)
+
+
+def sobol_g(U: np.ndarray, a: np.ndarray = SOBOL_G_A) -> np.ndarray:
+    """Sobol' G function (sensobol::sobol_Fun)."""
+    return np.prod((np.abs(4.0 * U - 2.0) + a) / (1.0 + a), axis=1)
+
+
+_OO_A1 = np.array([0.0118, 0.0456, 0.2297, 0.0393, 0.1177, 0.3865, 0.3897,
+                   0.6061, 0.6159, 0.4005, 1.0741, 1.1474, 0.7880, 1.1242,
+                   1.1982])
+_OO_A2 = np.array([0.4341, 0.0887, 0.0512, 0.3233, 0.1489, 1.0360, 0.9892,
+                   0.9672, 0.8977, 0.8083, 1.8426, 2.4712, 2.3946, 2.0045,
+                   2.2621])
+_OO_A3 = np.array([0.1044, 0.2057, 0.0774, 0.2730, 0.1253, 0.7526, 0.8570,
+                   1.0331, 0.8388, 0.7970, 2.2145, 2.0382, 2.4004, 2.0541,
+                   1.9845])
+_OO_M = np.array([
+    -0.022482886, -0.18501666, 0.13418263, 0.36867264, 0.17172785, 0.13651143, -0.44034404,
+    -0.081422854, 0.71321025, -0.44361072, 0.50383394, -0.024101458, -0.045939684, 0.21666181,
+    0.055887417, 0.2565963, 0.053792287, 0.25800381, 0.23795905, -0.59125756, -0.081627077,
+    -0.28749073, 0.41581639, 0.49752241, 0.083893165, -0.11056683, 0.033222351, -0.13979497,
+    -0.031020556, -0.22318721, -0.055999811, 0.19542252, 0.095529005, -0.2862653, -0.14441303,
+    0.22369356, 0.14527412, 0.28998481, 0.2310501, -0.31929879, -0.29039128, -0.20956898, 0.43139047,
+    0.024429152, 0.044904409, 0.66448103, 0.43069872, 0.29924645, -0.16202441, -0.31479544,
+    -0.39026802, 0.17679822, 0.057952663, 0.17230342, 0.13466011, -0.3527524, 0.25146896, -0.018810529,
+    0.36482392, -0.32504618, -0.121278, 0.12463327, 0.10656519, 0.046562296, -0.21678617, 0.19492172,
+    -0.065521126, 0.024404669, -0.09682886, 0.19366196, 0.33354757, 0.31295994, -0.083615456,
+    -0.25342082, 0.37325717, -0.2837623, -0.32820154, -0.10496068, -0.22073452, -0.13708154,
+    -0.14426375, -0.11503319, 0.22424151, -0.030395022, -0.51505615, 0.017254978, 0.038957118,
+    0.36069184, 0.30902452, 0.050030193, -0.077875893, 0.003745656, 0.88685604, -0.26590028,
+    -0.079325357, -0.042734919, -0.18653782, -0.35604718, -0.17497421, 0.088699956, 0.40025886,
+    -0.055979693, 0.13724479, 0.21485613, -0.011265799, -0.09229473, 0.59209563, 0.031338285,
+    -0.033080861, -0.24308858, -0.099798547, 0.034460195, 0.095119813, -0.3380162, 0.0063860024,
+    -0.61207299, 0.081325416, 0.88683114, 0.14254905, 0.14776204, -0.13189434, 0.52878496, 0.12652391,
+    0.045113625, 0.58373514, 0.37291503, 0.11395325, -0.29479222, -0.57014085, 0.46291592, -0.094050179,
+    0.13959097, -0.38607402, -0.4489706, -0.14602419, 0.058107658, -0.32289338, 0.093139162,
+    0.072427234, -0.56919401, 0.52554237, 0.23656926, -0.011782016, 0.071820601, 0.078277291,
+    -0.13355752, 0.22722721, 0.14369455, -0.45198935, -0.55574794, 0.66145875, 0.34633299, 0.14098019,
+    0.51882591, -0.28019898, -0.1603226, -0.068413337, -0.20428242, 0.069672173, 0.23112577,
+    -0.044368579, -0.16455425, 0.21620977, 0.0042702105, -0.087399014, 0.31599556, -0.027551859,
+    0.13434254, 0.13497371, 0.05400568, -0.17374789, 0.17525393, 0.060258929, -0.17914162, -0.31056619,
+    -0.25358691, 0.025847535, -0.43006001, -0.62266361, -0.033996882, -0.29038151, 0.03410127,
+    0.034903413, -0.12121764, 0.026030714, -0.33546274, -0.41424111, 0.05324838, -0.27099455,
+    -0.026251302, 0.41024137, 0.26636349, 0.15582891, -0.18666254, 0.019895831, -0.24388652,
+    -0.44098852, 0.012618825, 0.24945112, 0.071101888, 0.24623792, 0.17484502, 0.0085286769,
+    0.2514707, -0.14659862, -0.08462515, 0.36931333, -0.29955293, 0.1104436, -0.75690139, 0.041494323,
+    -0.25980564, 0.46402128, -0.36112127, -0.94980789, -0.16504063, 0.0030943325, 0.052792942,
+    0.22523648, 0.38390366, 0.45562427, -0.18631744, 0.0082333995, 0.16670803, 0.16045688]
+).reshape(15, 15)
+
+
+def oakley_ohagan(U: np.ndarray) -> np.ndarray:
+    """Oakley & O'Hagan (2004) 15-input function, inputs N(0,1)
+    (sensobol::oakley_Fun; coefficients from the original article)."""
+    Z = norm.ppf(np.clip(U, 1e-15, 1 - 1e-15))
+    return (Z @ _OO_A1 + np.sin(Z) @ _OO_A2 + np.cos(Z) @ _OO_A3
+            + np.einsum("ni,ij,nj->n", Z, _OO_M, Z))
+
+
+def _trunc_normal_ppf(u, mu, sd, lo=0.0, hi=1.0):
+    a, b = norm.cdf(lo, mu, sd), norm.cdf(hi, mu, sd)
+    return norm.ppf(a + (b - a) * u, mu, sd)
+
+
+def multiverse(U: np.ndarray) -> np.ndarray:
+    """Mixed-input 'Multiverse' model (Saltelli et al. 2025), as coded in
+    the authors' R script: columns (theta1, theta2, theta3, xi, zeta);
+    xi = floor(8u) selects the model form, zeta = round(u) switches the
+    three continuous inputs from U(0,1) to N(1/2, 1/12) truncated to
+    [0,1]."""
+    xi = np.floor(U[:, 3] * 8).astype(int)
+    zeta = np.round(U[:, 4]).astype(int)
+    T = U[:, :3].copy()
+    tn = _trunc_normal_ppf(U[:, :3], 0.5, 1.0 / 12.0)
+    T[zeta == 1] = tn[zeta == 1]
+    x1, x2, x3 = T[:, 0], T[:, 1], T[:, 2]
+    forms = np.stack([x1 + x2 + x3, x1 + x2 * x3, x1 * x2 + x3,
+                      x1 * x3 + x2, x1 * (x2 + x3), x2 * (x1 + x3),
+                      x3 * (x1 + x2), x1 * x2 * x3], axis=1)
+    return np.cbrt(forms[np.arange(len(U)), xi])
+
+
+# =====================================================================
+# 7.  Becker (2020) metafunction -- port of sensobol::metafunction
+# =====================================================================
+
+def _piecewise_large(x):
+    return (-1.0) ** np.floor(4 * x) * (0.125 - np.mod(x, 0.25)) + 0.125
+
+
+def _piecewise_small(x):
+    return ((-1.0) ** np.floor(32 * x) * (0.03125 - 2 * np.mod(x, 0.03125))
+            + 0.03125) / 2
+
+
+BECKER_FUNCTIONS: Dict[str, Callable[[np.ndarray], np.ndarray]] = {
+    "Linear": lambda x: x,
+    "Quadratic": lambda x: x ** 2,
+    "Cubic": lambda x: x ** 3,
+    "Exponential": lambda x: np.exp(x) / (np.e - 1),
+    "Periodic": lambda x: np.sin(2 * np.pi * x) / 2,
+    "Discontinuous": lambda x: (x > 0.5).astype(float),
+    "Non.monotonic": lambda x: 4 * (x - 0.5) ** 2,
+    "Inverse": lambda x: (10 - 1 / 1.1) ** -1 * (x + 0.1) ** -1,
+    "No.effect": lambda x: 0.0 * x,
+    "Trigonometric": lambda x: np.cos(x),
+    "Piecewise.large": _piecewise_large,
+    "Piecewise.small": _piecewise_small,
+    "Oscillation": lambda x: x ** 2 - 0.2 * np.cos(7 * np.pi * x),
 }
 
 
-def build_becker_cache(N_cache: int = 128, seed: int = 99) -> list:
-    """
-    Run N_cache independent Becker metafunction simulations and cache
-    the raw (mat_uniform, Y_disc, params, jansen_vals) tuples.
-
-    Critically, mat_uniform stores the *actual* [0,1] design used, so
-    that the SoS outer loop can re-apply the ersatz with different
-    fill_threshold / grid_exponent without re-running the model.
-
-    tau_sampling is stored per run so the SoS outer loop can filter
-    by sampling method or treat it as a SoS factor.
-
-    Returns list of dicts with keys:
-      mat_uniform, Y_disc, params, jansen_vals, k, tau
-    """
-    rng_meta  = np.random.default_rng(seed)
-    meta_mat  = sobol_mat(N=N_cache, params=SOS_PARAM_NAMES, matrices=("A",),
-                          seed=seed)
-
-    # Map columns to hyperparameter distributions (same as main Becker block)
-    epsilon_vals     = np.floor(meta_mat[:, 0] * 199 + 1).astype(int)
-    phi_vals         = np.floor(meta_mat[:, 1] * 8).astype(int) + 1
-    k_vals           = np.floor(meta_mat[:, 2] * 12 + 3).astype(int)
-    tau_vals         = np.floor(meta_mat[:, 3] * 2).astype(int) + 1
-    base_sample_vals = np.floor(meta_mat[:, 4] * 180 + 20).astype(int)
-
-    cache = []
-    for i in range(N_cache):
-        k       = int(k_vals[i])
-        tau     = int(tau_vals[i])
-        eps     = int(epsilon_vals[i])
-        phi     = int(phi_vals[i])
-        base    = int(base_sample_vals[i])
-        cost    = base * (k + 1)
-        params  = [f"X{j}" for j in range(1, k + 1)]
-        type_   = "QRN" if tau == 2 else "R"
-
-        try:
-            # Raw uniform design (for re-applying ersatz post-hoc)
-            mat_uniform = sobol_mat(N=cost, params=params, matrices=("A",),
-                                    type_=type_, seed=eps)
-            # Distribution-transformed inputs for model
-            mat_transf  = random_distributions_fun(
-                sobol_mat(N=cost, params=params, matrices=("A",),
-                          type_=type_, seed=eps),
-                phi=phi, rng=np.random.default_rng(eps))
-            Y_disc = metafunction(mat_transf, epsilon=eps)
-
-            # Jansen reference (fixed sampling params)
-            mat_j = sobol_mat(N=base, params=params, matrices=("A","AB"),
-                              type_=type_, seed=eps)
-            mat_jt = random_distributions_fun(mat_j, phi=phi,
-                                              rng=np.random.default_rng(eps))
-            Y_j   = metafunction(mat_jt, epsilon=eps)
-            jansen_vals = jansen_fun(Y_j, base, params)["value"].values
-
-            cache.append({"mat_uniform": mat_uniform,
-                          "Y_disc":      Y_disc,
-                          "params":      params,
-                          "jansen_vals": jansen_vals,
-                          "k":           k,
-                          "tau":         tau})
-        except Exception:
-            pass   # skip failed runs silently
-
-    print(f"  Cache built: {len(cache)}/{N_cache} runs succeeded")
-    return cache
-
-
-def sos_metrics(cache: list,
-                fill_threshold:   float = 0.5,
-                grid_exponent:    float = 0.5,
-                screen_threshold: float = 0.05,
-                pawn_bins:        int   = 10,
-                tau_filter:       int   = 0) -> np.ndarray:
-    """
-    Recompute sensitivity metrics on a fixed Becker cache with new
-    method-level parameters.  No model evaluations — all computation
-    is post-hoc on stored (mat, Y) pairs.
-
-    Parameters
-    ----------
-    cache            : output of build_becker_cache()
-    fill_threshold   : Moore-fill threshold for adj. ersatz
-    grid_exponent    : grid resolution exponent for adj. ersatz
-    screen_threshold : threshold for α/β classification
-    pawn_bins        : number of PAWN bins
-    tau_filter       : 0 = use all runs; 1 = random only; 2 = QRN only
-
-    Returns
-    -------
-    length-8 array:
-      [rho_adj, rho_pawn, mae_adj, mae_pawn,
-       alpha_adj, alpha_pawn, beta_adj, beta_pawn]
-    at the given screen_threshold.
-    """
-    rho_adj_list = []; rho_pawn_list = []
-    mae_adj_list = []; mae_pawn_list = []
-    ab_adj_list  = []; ab_pawn_list  = []
-
-    def _rho(a, b):
-        if np.any(np.isnan(a)) or np.any(np.isnan(b)):
-            return np.nan
-        return abs(np.corrcoef(savage_scores_fun(a), savage_scores_fun(b))[0,1])
-
-    def _ab(pred, true, thresh):
-        if np.any(np.isnan(pred)):
-            return np.nan, np.nan
-        yt = (true > thresh).astype(int)
-        yp = (pred > thresh).astype(int)
-        nn = (yt == 0).sum() or 1
-        np_ = (yt == 1).sum() or 1
-        alpha = ((yp==1)&(yt==0)).sum()/nn
-        beta  = ((yp==0)&(yt==1)).sum()/np_
-        return float(alpha), float(beta)
-
-    for run in cache:
-        if tau_filter != 0 and run["tau"] != tau_filter:
-            continue
-        mat   = run["mat_uniform"]
-        Y     = run["Y_disc"]
-        prms  = run["params"]
-        ref   = run["jansen_vals"]
-        try:
-            adj_vals  = discrepancy_ersatz(mat, Y, prms, adj=1,
-                                           fill_threshold=fill_threshold,
-                                           grid_exponent=grid_exponent
-                                           )["value"].values
-            pawn_vals = pawn_total_indices(mat, Y, prms,
-                                           n_bins=int(pawn_bins)
-                                           )["value"].values
-
-            rho_adj_list.append(_rho(ref, adj_vals))
-            rho_pawn_list.append(_rho(ref, pawn_vals))
-            mae_adj_list.append(float(np.nanmean(np.abs(adj_vals - ref))))
-            mae_pawn_list.append(float(np.nanmean(np.abs(pawn_vals - ref))))
-            ab_adj_list.append(_ab(adj_vals,  ref, screen_threshold))
-            ab_pawn_list.append(_ab(pawn_vals, ref, screen_threshold))
-        except Exception:
-            pass
-
-    def _med(lst):
-        v = np.array([x for x in lst if not np.isnan(x)])
-        return float(np.nanmedian(v)) if len(v) else np.nan
-
-    alpha_adj  = np.nanmedian([a for a,_ in ab_adj_list])  if ab_adj_list  else np.nan
-    beta_adj   = np.nanmedian([b for _,b in ab_adj_list])  if ab_adj_list  else np.nan
-    alpha_pawn = np.nanmedian([a for a,_ in ab_pawn_list]) if ab_pawn_list else np.nan
-    beta_pawn  = np.nanmedian([b for _,b in ab_pawn_list]) if ab_pawn_list else np.nan
-
-    return np.array([_med(rho_adj_list),  _med(rho_pawn_list),
-                     _med(mae_adj_list),  _med(mae_pawn_list),
-                     alpha_adj,           alpha_pawn,
-                     beta_adj,            beta_pawn])
-
-
-def run_sos_study(cache: list,
-                  N_sos: int = 2**7,
-                  seed_sos: int = 77) -> pd.DataFrame:
-    """
-    Global sensitivity analysis of the sensitivity analysis itself.
-
-    Outer design: Sobol Jansen matrix (N_sos × (k_sos+1)) over the 5
-    SoS parameters, all varied simultaneously.  For each outer design
-    point, sos_metrics() recomputes the metrics on the fixed cache.
-    Jansen T_i are then computed on the 8 scalar output metrics.
-
-    Returns a DataFrame (5 SoS params × 8 output metrics) of T_i values.
-    """
-    k_sos  = len(SOS_PARAM_NAMES)
-    # Jansen design: A + k×AB, each column maps to a SoS parameter
-    mat_sos = sobol_mat(N=N_sos, params=SOS_PARAM_NAMES,
-                        matrices=("A", "AB"), seed=seed_sos)
-
-    # Map uniform [0,1] columns to parameter ranges
-    def _map(col_u, lo, hi, is_int=False):
-        v = lo + (hi - lo) * col_u
-        return np.floor(v).astype(int) if is_int else v
-
-    def _decode(mat):
-        """Return list of (fill_threshold, grid_exponent, screen_threshold,
-                           pawn_bins, tau_sampling) for each row."""
-        rows = []
-        for i in range(mat.shape[0]):
-            ft  = float(np.clip(SOS_PARAM_BOUNDS["fill_threshold"][0]   + (SOS_PARAM_BOUNDS["fill_threshold"][1]   - SOS_PARAM_BOUNDS["fill_threshold"][0])   * mat[i,0], 0.25, 0.75))
-            ge  = float(np.clip(SOS_PARAM_BOUNDS["grid_exponent"][0]    + (SOS_PARAM_BOUNDS["grid_exponent"][1]    - SOS_PARAM_BOUNDS["grid_exponent"][0])    * mat[i,1], 0.40, 0.60))
-            st  = float(np.clip(SOS_PARAM_BOUNDS["screen_threshold"][0] + (SOS_PARAM_BOUNDS["screen_threshold"][1] - SOS_PARAM_BOUNDS["screen_threshold"][0]) * mat[i,2], 0.01, 0.10))
-            pb  = int(np.clip(np.floor(SOS_PARAM_BOUNDS["pawn_bins"][0] + (SOS_PARAM_BOUNDS["pawn_bins"][1] - SOS_PARAM_BOUNDS["pawn_bins"][0]) * mat[i,3]), 5, 20))
-            tau = int(np.clip(np.floor(SOS_PARAM_BOUNDS["tau_sampling"][0] + (SOS_PARAM_BOUNDS["tau_sampling"][1] - SOS_PARAM_BOUNDS["tau_sampling"][0]) * mat[i,4]), 1, 2))
-            rows.append((ft, ge, st, pb, tau))
-        return rows
-
-    n_rows  = mat_sos.shape[0]   # N_sos * (k_sos + 1)
-    decoded = _decode(mat_sos)
-    print(f"  SoS: evaluating {n_rows} design points on {len(cache)}-run cache …")
-
-    Y_sos = np.array([
-        sos_metrics(cache,
-                    fill_threshold   = ft,
-                    grid_exponent    = ge,
-                    screen_threshold = st,
-                    pawn_bins        = pb,
-                    tau_filter       = tau)
-        for ft, ge, st, pb, tau in decoded
-    ])   # shape (n_rows, 8)
-
-    out_names = ["ρ_adj", "ρ_pawn", "MAE_adj", "MAE_pawn",
-                 "α_adj", "α_pawn", "β_adj",  "β_pawn"]
-
-    # Jansen T_i for each output metric
-    Ti_rows = []
-    for col, oname in enumerate(out_names):
-        y_col = Y_sos[:, col]
-        if np.all(np.isnan(y_col)):
-            Ti_rows.append(np.full(k_sos, np.nan))
-            continue
-        df_j = jansen_fun(y_col, N_sos, SOS_PARAM_NAMES)
-        Ti_rows.append(df_j["value"].values)
-
-    result = pd.DataFrame(
-        np.array(Ti_rows).T,
-        index   = SOS_PARAM_NAMES,
-        columns = out_names
-    )
-    return result
-
-
-# ─────────────────────────────────────────────────────────────
-# 18.  General convergence study
-# ─────────────────────────────────────────────────────────────
-
-def convergence_study(name: str,
-                      mat_full: np.ndarray,
-                      Y_full:   np.ndarray,
-                      true_T:   np.ndarray,
-                      params:   list,
-                      Ns:       np.ndarray | None = None,
-                      pce_order: int = 3,
-                      pawn_bins: int = 10) -> pd.DataFrame:
-    """
-    Track ρ (Savage-score rank correlation) and MAE vs sample size N
-    for all five estimators on a pre-built full design.
-
-    At each N, the first N rows of mat_full / Y_full are used.  This
-    means all methods see identical subsets — the only variable is N.
-    mat_full must contain at least max(Ns) rows.
-
-    Parameters
-    ----------
-    name      : label for printing and plot title
-    mat_full  : N_max × k uniform [0,1] design (Sobol QRN)
-    Y_full    : length-N_max model output
-    true_T    : length-k reference total-order indices
-    params    : list of k parameter names
-    Ns        : array of sample sizes to evaluate; default 2^4 … 2^13
-    pce_order : PCE expansion order (adaptive reduction if underdetermined)
-    pawn_bins : PAWN bin count
-
-    Returns
-    -------
-    DataFrame with columns N, {rho,mae}_{ersatz,adj,pce,shap,pawn}
-    """
-    if Ns is None:
-        max_exp = int(np.floor(np.log2(mat_full.shape[0])))
-        Ns = 2 ** np.arange(4, min(max_exp + 1, 14))
-
-    def _rho_mae(vals, ref):
-        mae = float(np.nanmean(np.abs(vals - ref)))
-        if np.any(np.isnan(vals)):
-            return np.nan, mae
-        ss_ref  = savage_scores_fun(ref)
-        ss_vals = savage_scores_fun(vals)
-        rho = abs(float(np.corrcoef(ss_ref, ss_vals)[0, 1]))
-        return rho, mae
-
-    records = []
-    for n in Ns:
-        mat_n = mat_full[:n]
-        Y_n   = Y_full[:n]
-
-        # All five estimators on identical (mat_n, Y_n)
-        try:
-            v_ers  = discrepancy_ersatz(mat_n, Y_n, params, adj=0)["value"].values
-            v_adj  = discrepancy_ersatz(mat_n, Y_n, params, adj=1)["value"].values
-            v_pce  = pce_total_indices(mat_n, Y_n, params, order=pce_order)["value"].values
-            v_shap = pce_shapley_indices(mat_n, Y_n, params, order=pce_order)["value"].values
-            v_pawn = pawn_total_indices(mat_n, Y_n, params, n_bins=pawn_bins)["value"].values
-        except Exception:
-            records.append([n] + [np.nan] * 10)
-            continue
-
-        r_ers,  m_ers  = _rho_mae(v_ers,  true_T)
-        r_adj,  m_adj  = _rho_mae(v_adj,  true_T)
-        r_pce,  m_pce  = _rho_mae(v_pce,  true_T)
-        r_shap, m_shap = _rho_mae(v_shap, true_T)
-        r_pawn, m_pawn = _rho_mae(v_pawn, true_T)
-
-        records.append([n,
-                        r_ers, m_ers, r_adj, m_adj,
-                        r_pce, m_pce, r_shap, m_shap,
-                        r_pawn, m_pawn])
-
-    cols = ["N",
-            "rho_ers", "mae_ers",
-            "rho_adj", "mae_adj",
-            "rho_pce", "mae_pce",
-            "rho_shap","mae_shap",
-            "rho_pawn","mae_pawn"]
-    df = pd.DataFrame(records, columns=cols)
-
-    # Print summary
-    print(f"\n  Convergence ({name}):")
-    hdr = f"  {'N':>6}  {'ers ρ':>6} {'adj ρ':>6} {'pce ρ':>6} {'shap ρ':>7} {'pawn ρ':>7}"
-    print(hdr)
-    for _, row in df.iterrows():
-        print(f"  {int(row.N):>6}  "
-              f"{row.rho_ers:>6.3f} {row.rho_adj:>6.3f} "
-              f"{row.rho_pce:>6.3f} {row.rho_shap:>7.3f} {row.rho_pawn:>7.3f}")
-    return df
-
-
-def plot_convergence_grid(conv_dict: dict,
-                          filename: str = "convergence_all.pdf") -> None:
-    """
-    Produce a (n_studies × 2) grid of convergence plots — one row per
-    benchmark study, one column for ρ and one for MAE.
-
-    conv_dict : {study_name: convergence_df}  from convergence_study()
-    """
-    studies    = list(conv_dict.keys())
-    n_studies  = len(studies)
-    fig, axes  = plt.subplots(n_studies, 2,
-                               figsize=(14, 3.5 * n_studies),
-                               sharex=False)
-    if n_studies == 1:
-        axes = [axes]      # ensure 2-D indexing
-
-    METHODS = [
-        ("rho_ers",  "mae_ers",  "Ersatz (non-adj)", "v--", "gray"),
-        ("rho_adj",  "mae_adj",  "Adj. ersatz",       "o-",  "steelblue"),
-        ("rho_pce",  "mae_pce",  "PCE (T_i)",         "s-",  "darkorange"),
-        ("rho_shap", "mae_shap", "PCE (Shapley)",      "D-",  "firebrick"),
-        ("rho_pawn", "mae_pawn", "PAWN",               "^-",  "seagreen"),
-    ]
-
-    for row_idx, sname in enumerate(studies):
-        df   = conv_dict[sname]
-        Ns   = df["N"].values
-        ax_r = axes[row_idx][0]
-        ax_m = axes[row_idx][1]
-
-        for rcol, mcol, label, style, colour in METHODS:
-            rvals = df[rcol].values
-            mvals = df[mcol].values
-            kw    = dict(color=colour, markersize=5, linewidth=1.6)
-            ax_r.plot(Ns, rvals, style, label=label, **kw)
-            ax_m.plot(Ns, mvals, style, label=label, **kw)
-
-        for ax, ylabel, ylim in [(ax_r, "ρ (Savage-score)", (0, 1.05)),
-                                  (ax_m, "MAE",              (0, None))]:
-            ax.set_xscale("log", base=2)
-            ax.set_xticks(Ns)
-            ax.set_xticklabels([str(int(n)) for n in Ns],
-                                rotation=45, fontsize=11)
-            ax.set_xlabel("Sample size N", fontsize=13)
-            ax.set_ylabel(ylabel, fontsize=13)
-            ax.set_ylim(*ylim)
-            ax.tick_params(labelsize=11)
-            ax.grid(True, alpha=0.3)
-
-        ax_r.set_title(f"{sname} — ρ",   fontsize=13, fontweight="bold")
-        ax_m.set_title(f"{sname} — MAE", fontsize=13, fontweight="bold")
-        if row_idx == 0:
-            ax_r.legend(fontsize=12, loc="lower right")
-
-    plt.suptitle("Convergence of all estimators vs sample size",
-                 fontsize=14, fontweight="bold", y=1.002)
-    plt.tight_layout()
-    plt.savefig(filename, dpi=300, bbox_inches="tight")
-    print(f"  Saved {filename}")
-
-if __name__ == "__main__":
-
-    # ── Convergence dict: accumulates all studies for joint plot ────
-    conv_dict = {}
-
-    # ── Bratley 1988 ────────────────────────────────────────────
-    # N_table = 2^9 for the main table; N_max = 2^13 for convergence
-    N = 2**9; N_max = 2**13
-    params = [f"x{i}" for i in range(1, 9)]
-    # Reference T_i computed from large-N Jansen at N=2^14, seed=123.
-    # Analytical: sum > 1 because Bratley1988 has strong interactions
-    # (term i involves the product of all x_1..x_i, so all x_j j<i are
-    # involved in higher-order terms).
-    N_ref   = 2**14
-    mat_ref = sobol_mat(N=N_ref, params=params, matrices=("A","AB"), seed=123)
-    sobol_b88 = jansen_fun(bratley1988_fun(mat_ref), N_ref, params)["value"].values
-    print(f"  Bratley1988 reference T_i (N={N_ref}): {sobol_b88.round(3)}, sum={sobol_b88.sum():.3f}")
-
-    mat_dis     = sobol_mat(N=N,     params=params, matrices=("A",), seed=123)
-    mat_dis_max = sobol_mat(N=N_max, params=params, matrices=("A",), seed=123)
-    Y_dis       = bratley1988_fun(mat_dis)
-    Y_dis_max   = bratley1988_fun(mat_dis_max)
-
-    _run_study("Bratley 1988", N, params, None, Y_dis,
-               mat_dis, None, sobol_true=sobol_b88)
-    conv_dict["Bratley 1988"] = convergence_study(
-        "Bratley 1988", mat_dis_max, Y_dis_max, sobol_b88, params)
-
-    # ── Bratley 1992 ────────────────────────────────────────────
-    # Reference T_i: sum >> 1 because the c_j*x_j weighted products create
-    # large higher-order interactions. The c vector [1,3,5,...,15] means
-    # the highest-degree term dominates all variance, making T_i nearly
-    # equal across all variables (all participate via the product).
-    mat_ref   = sobol_mat(N=N_ref, params=params, matrices=("A","AB"), seed=123)
-    sobol_b92 = jansen_fun(bratley1992_fun(mat_ref), N_ref, params)["value"].values
-    print(f"  Bratley1992 reference T_i (N={N_ref}): {sobol_b92.round(3)}, sum={sobol_b92.sum():.3f}")
-
-    mat_dis     = sobol_mat(N=N,     params=params, matrices=("A",), seed=123)
-    mat_dis_max = sobol_mat(N=N_max, params=params, matrices=("A",), seed=123)
-    Y_dis       = bratley1992_fun(mat_dis)
-    Y_dis_max   = bratley1992_fun(mat_dis_max)
-
-    _run_study("Bratley 1992", N, params, None, Y_dis,
-               mat_dis, None, sobol_true=sobol_b92)
-    conv_dict["Bratley 1992"] = convergence_study(
-        "Bratley 1992", mat_dis_max, Y_dis_max, sobol_b92, params)
-
-    # ── Ishigami ────────────────────────────────────────────────
-    N = 2**9; N_max = 2**13
-    params = [f"x{i}" for i in range(1, 4)]
-
-    # Analytical T_i (Saltelli et al. 2008, p.179; Homma & Saltelli 1996):
-    #   a=7, b=0.1, inputs ~ U[-pi, pi] (mapped from U[0,1] inside the function)
-    #   T1=0.5576, T2=0.4424, T3=0.2437   sum=1.2437  (interaction x1-x3)
-    sob_ish = np.array([0.5576, 0.4424, 0.2437])
-    print(f"  Ishigami analytical T_i: {sob_ish}  sum={sob_ish.sum():.4f}")
-
-    mat_sob = sobol_mat(N=N,     params=params, matrices=("A", "AB"), seed=123)
-    mat_dis = sobol_mat(N=N,     params=params, matrices=("A",),      seed=123)
-    Y_sob   = ishigami_fun(mat_sob)
-    Y_dis   = ishigami_fun(mat_dis)
-
-    _run_study("Ishigami", N, params, Y_sob, Y_dis, mat_dis, mat_sob,
-               sobol_true=sob_ish)
-
-    mat_dis_max = sobol_mat(N=N_max, params=params, matrices=("A",), seed=123)
-    Y_dis_max   = ishigami_fun(mat_dis_max)
-    conv_dict["Ishigami"] = convergence_study(
-        "Ishigami", mat_dis_max, Y_dis_max, sob_ish, params)
-
-    # ── Ishigami 2 (explicit [-π,π] transform, same data) ───────
-    mat_sob2 = mat_sob * (2 * np.pi) - np.pi
-    mat_dis2 = mat_dis * (2 * np.pi) - np.pi
-    Y_sob2   = (np.sin(mat_sob2[:, 0])
-                + 7 * np.sin(mat_sob2[:, 1])**2
-                + 0.1 * mat_sob2[:, 2]**4 * np.sin(mat_sob2[:, 0]))
-    Y_dis2   = (np.sin(mat_dis2[:, 0])
-                + 7 * np.sin(mat_dis2[:, 1])**2
-                + 0.1 * mat_dis2[:, 2]**4 * np.sin(mat_dis2[:, 0]))
-    _run_study("Ishigami 2 (explicit [-π,π])", N, params,
-               Y_sob2, Y_dis2, mat_dis, mat_sob, sobol_true=sob_ish)
-    # convergence identical to Ishigami — skipped to avoid duplication
-
-    # ── Oakley-O'Hagan ──────────────────────────────────────────
-    N = 2**9; N_max = 2**13
-    params = [f"x{i}" for i in range(1, 16)]
-
-    # Reference T_i from large-N Jansen at N=2^14, seed=123.
-    # Oakley-O'Hagan has no closed-form T_i; sum ≈ 1.0 because
-    # the diagonal M matrix makes interactions negligible.
-    N_ref_oo = 2**14
-    _mat_oo_ref = sobol_mat(N=N_ref_oo, params=params,
-                            matrices=("A","AB"), seed=123)
-    sob_oo = jansen_fun(oakley_ohagan_fun(_mat_oo_ref),
-                        N_ref_oo, params)["value"].values
-    print(f"  Oakley-OHagan reference T_i (N={N_ref_oo}): {sob_oo.round(4)}, sum={sob_oo.sum():.4f}")
-
-    mat_sob = sobol_mat(N=N,     params=params, matrices=("A", "AB"), seed=123)
-    mat_dis = sobol_mat(N=N,     params=params, matrices=("A",),      seed=123)
-    Y_sob   = oakley_ohagan_fun(mat_sob)
-    Y_dis   = oakley_ohagan_fun(mat_dis)
-
-    _run_study("Oakley-O'Hagan", N, params, Y_sob, Y_dis, mat_dis, mat_sob,
-               sobol_true=sob_oo)
-
-    mat_dis_max = sobol_mat(N=N_max, params=params, matrices=("A",), seed=123)
-    Y_dis_max   = oakley_ohagan_fun(mat_dis_max)
-    conv_dict["Oakley-O'Hagan"] = convergence_study(
-        "Oakley-O'Hagan", mat_dis_max, Y_dis_max, sob_oo, params)
-
-    # ── Sobol g-function ────────────────────────────────────────
-    N = 2**9; N_max = 2**13
-    params = [f"x{i}" for i in range(1, 9)]
-    # Analytical T_i for the Sobol g-function (Saltelli et al. 2010):
-    #   V_i = 1 / (3*(1+a_i)^2),  P = prod(1+V_i)
-    #   T_i = P * V_i / (1+V_i) / (P-1)
-    # Sum > 1 because interactions are present (a1=0, a2=1 create strong
-    # pairwise and higher interactions).
-    _a_g = np.array([0, 1, 4.5, 9, 99, 99, 99, 99], dtype=float)
-    _Vi  = 1.0 / (3 * (1 + _a_g)**2)
-    _P   = np.prod(1 + _Vi)
-    sobol_g = _P * _Vi / (1 + _Vi) / (_P - 1)
-    print(f"  Sobol-g analytical T_i: {sobol_g.round(3)}, sum={sobol_g.sum():.3f}")
-
-    mat_dis     = sobol_mat(N=N,     params=params, matrices=("A",), seed=123)
-    mat_dis_max = sobol_mat(N=N_max, params=params, matrices=("A",), seed=123)
-    Y_dis       = sobol_g_fun(mat_dis)
-    Y_dis_max   = sobol_g_fun(mat_dis_max)
-
-    _run_study("Sobol g-function", N, params, None, Y_dis,
-               mat_dis, None, sobol_true=sobol_g)
-    conv_dict["Sobol g-function"] = convergence_study(
-        "Sobol g-function", mat_dis_max, Y_dis_max, sobol_g, params)
-
-    # ── Play model ──────────────────────────────────────────────
-    N = 2**9
-    params_play = ["θ1", "θ2", "θ3", "ξ", "ζ"]
-
-    # Jansen: A + k*AB  — seed=123 to match R script
-    mat_sob  = sobol_mat(N=N, params=params_play, matrices=("A", "AB"), seed=123)
-    mat_sob2 = mat_sob.copy()
-    mat_sob2[:, 3] = np.floor(mat_sob2[:, 3] * 8)
-    mat_sob2[:, 4] = np.round(mat_sob2[:, 4])
-
-    mat_dis  = sobol_mat(N=N, params=params_play, matrices=("A",), seed=123)
-    mat_dis2 = mat_dis.copy()
-    mat_dis2[:, 3] = np.floor(mat_dis2[:, 3] * 8)
-    mat_dis2[:, 4] = np.round(mat_dis2[:, 4])
-
-    Y_sob = np.array([play_model(mat_sob2[i]) for i in range(mat_sob2.shape[0])])
-    Y_dis = np.array([play_model(mat_dis2[i]) for i in range(mat_dis2.shape[0])])
-
-    sob_df = jansen_fun(Y_sob, N, params_play)
-
-    dis        = discrepancy_ersatz(mat_dis, Y_dis, params_play, adj=0)
-    dis_adj    = discrepancy_ersatz(mat_dis, Y_dis, params_play, adj=1)
-    pce_play   = pce_total_indices(mat_dis, Y_dis, params_play)
-    shap_play  = pce_shapley_indices(mat_dis, Y_dis, params_play)
-    pawn_play  = pawn_total_indices(mat_dis, Y_dis, params_play)
-
-    print("\n" + "="*60)
-    print("  Play model")
-    print("="*60)
-    tab_play = build_table(sob_df["value"].values,
-                           {"ersatz": dis, "ersatz_adj": dis_adj,
-                            "PCE": pce_play, "Shapley": shap_play,
-                            "PAWN(max-KS)": pawn_play},
-                           params_play)
-    print(tab_play.to_string())
-
-    # Convergence for Play model — pre-discretised columns must be passed
-    # as-is; mat_dis (uniform [0,1]) is used for ersatz/PAWN, mat_dis2
-    # (with discrete columns) for model evaluation.
-    N_max_play = 2**13
-    mat_dis_max_play  = sobol_mat(N=N_max_play, params=params_play, matrices=("A",), seed=123)
-    mat_dis2_max_play = mat_dis_max_play.copy()
-    mat_dis2_max_play[:, 3] = np.floor(mat_dis2_max_play[:, 3] * 8)
-    mat_dis2_max_play[:, 4] = np.round(mat_dis2_max_play[:, 4])
-    Y_dis_max_play = np.array([play_model(mat_dis2_max_play[i])
-                                for i in range(mat_dis2_max_play.shape[0])])
-    sob_play = sob_df["value"].values
-    conv_dict["Play model"] = convergence_study(
-        "Play model", mat_dis_max_play, Y_dis_max_play, sob_play, params_play)
-
-    # ── Hydrology (HBV model, NSE output) ────────────────────────
-    # hydro.csv  : pre-transformed input matrix (N=50000 × 5 parameters)
-    #              produced by R's qunif() transforms on a Sobol design
-    # hydro2.csv : HBV model outputs; column 7 (= "NSE") is the response
-    #
-    # The [0,1] Sobol design is recovered by inverting the qunif transforms:
-    #   x1 ~ U(1, 500)   x2 ~ U(0.1, 2)   x3 ~ U(0.1, 0.98)
-    #   x4 ~ U(0, 0.1)   x5 ~ U(0.1, 0.98)
-
-    # Look first in cwd, then in the standard uploads location
-    import os
-    _uploads = "/mnt/user-data/uploads"
-    hydro_in  = "hydro.csv"  if os.path.exists("hydro.csv")  else os.path.join(_uploads, "hydro.csv")
-    hydro_out = "hydro2.csv" if os.path.exists("hydro2.csv") else os.path.join(_uploads, "hydro2.csv")
-
-    if os.path.exists(hydro_in) and os.path.exists(hydro_out):
-        print("\n" + "="*60)
-        print("  Hydrology (HBV model, N=50,000)")
-        print("="*60)
-
-        mat_dis2 = pd.read_csv(hydro_in,  index_col=0).values           # (50000, 5)
-        Y_dis    = pd.read_csv(hydro_out, index_col=0).iloc[:, 5].values # NSE column
-
-        # Invert qunif to get [0,1] design
-        bounds   = [(1, 500), (0.1, 2), (0.1, 0.98), (0, 0.1), (0.1, 0.98)]
-        params_h = [f"x{i}" for i in range(1, 6)]
-        mat_dis  = np.column_stack([
-            (mat_dis2[:, j] - lo) / (hi - lo)
-            for j, (lo, hi) in enumerate(bounds)
-        ])
-
-        # Reference total-order Sobol indices (hardcoded in R script)
-        true_ST = np.array([0.506923, 0.017083, 0.072756, 0.002433, 0.72544])
-
-        print("Computing estimators (N=50,000) …")
-        dis      = discrepancy_ersatz(mat_dis, Y_dis, params_h, adj=0)
-        dis_adj  = discrepancy_ersatz(mat_dis, Y_dis, params_h, adj=1)
-        pce_h    = pce_total_indices(mat_dis, Y_dis, params_h)
-        shap_h   = pce_shapley_indices(mat_dis, Y_dis, params_h)
-        pawn_h   = pawn_total_indices(mat_dis, Y_dis, params_h)
-
-        tab_h = build_table(true_ST,
-                            {"ersatz": dis, "ersatz_adj": dis_adj,
-                             "PCE": pce_h, "Shapley": shap_h,
-                             "PAWN(max-KS)": pawn_h},
-                            params_h)
-        print(tab_h.to_string())
-
-        # ── Convergence study: all methods vs N ─────────────────────
-        print("\nRunning convergence study …")
-        conv_h = convergence_study(
-            "Hydrology (HYMOD)", mat_dis, Y_dis, true_ST, params_h,
-            Ns=2 ** np.arange(5, 16))
-        conv_dict["Hydrology (HYMOD)"] = conv_h
-
-    else:
-        print("\n[Hydrology block skipped: hydro.csv / hydro2.csv not found in working dir]")
-
-
-
-    # ── Joint convergence grid plot across all benchmarks ───────────
-    plot_convergence_grid(conv_dict, filename="convergence_all.pdf")
-
-    # ── Becker metafunction study ────────────────────────────────────
-    # Compares all four estimators over the full hyperparameter space.
-    # Parameters sampled via Sobol (N_meta rows):
-    #   epsilon          : metafunction seed         U{1,...,200}
-    #   phi              : distribution family        U{1,...,8}
-    #   k                : number of inputs           U{3,...,15}
-    #   tau              : sampling method (1=R,2=QRN) U{1,2}
-    #   base_sample_size : N for Jansen               U{10,...,100}
-    # Cost-matched: cost_discrepancy = base_sample_size * (k + 1)
-
-    print("\n" + "="*60)
-    print("  Becker metafunction study")
-    print("="*60)
-
-    N_meta      = 2**9
-    meta_params = ["epsilon", "phi", "k", "tau", "base_sample_size"]
-    meta_mat    = sobol_mat(N=N_meta, params=meta_params, matrices=("A",))
-
-    # Distributions match R exactly (code_discrepancy_reloaded.R lines 254-258):
-    #   epsilon        : floor(qunif(u, 1,  200)) = floor(u*199+1)  → U{1,200}
-    #   phi            : floor(u*8)+1                                → U{1,8}
-    #   k              : floor(qunif(u, 3,  50))  = floor(u*47+3)   → U{3,50}
-    #   tau            : floor(u*2)+1                                → U{1,2}
-    #   base.sample.sz : floor(qunif(u, 10, 100)) = floor(u*90+10)  → U{10,100}
-    # Note: k is kept at U{3,50} to match R; PCE adapts order automatically.
-    epsilon_vals     = np.floor(meta_mat[:, 0] * 199 + 1).astype(int)   # U{1,200}
-    phi_vals         = np.floor(meta_mat[:, 1] * 8).astype(int) + 1     # U{1,8}
-    k_vals           = np.floor(meta_mat[:, 2] * 12 + 3).astype(int)    # 12 -> U{3,15}; U{3,50} in R but 15 is more manageable for PCE
-    tau_vals         = np.floor(meta_mat[:, 3] * 2).astype(int) + 1     # U{1,2}
-    base_sample_vals = np.floor(meta_mat[:, 4] * 90 + 10).astype(int)   # U{10,100}
-    cost_disc_vals   = base_sample_vals * (k_vals + 1)
-
-    import multiprocessing as _mp
-
-    n_workers = max(1, _mp.cpu_count() - 1)
-    arg_list  = [
-        (i, int(tau_vals[i]), int(epsilon_vals[i]),
-         int(base_sample_vals[i]), int(cost_disc_vals[i]),
-         int(phi_vals[i]), int(k_vals[i]))
-        for i in range(N_meta)
-    ]
-    print(f"  Running {N_meta} simulations on {n_workers} workers …")
-    with _mp.Pool(processes=n_workers) as pool:
-        results = pool.map(_run_one, arg_list)
-    print(f"  {N_meta} simulations complete")
-
-    results   = np.array(results)   # (N_meta, 16)
-    col_names = [
-        "rho_adj",   "rho_nonadj",   "rho_pce", "rho_shap",   "rho_pawn",
-        "mae_adj",   "mae_nonadj",   "mae_pce",   "mae_shap",   "mae_pawn",
-        "alpha_adj", "alpha_nonadj", "alpha_pce", "alpha_shap", "alpha_pawn",
-        "beta_adj",  "beta_nonadj",  "beta_pce",  "beta_shap",  "beta_pawn",
-    ]
-    becker_df = pd.DataFrame(results, columns=col_names)
-
-    # ── Median summary table ──────────────────────────────────────────
-    print("\n  Median values across all simulations:")
-    header = (f"  {'Metric':<12}  {'Adj.ersatz':>10}  {'Non-adj.':>10}"
-              f"  {'PCE (T_i)':>10}  {'Shapley':>10}  {'PAWN':>10}")
-    print(header)
-    print("  " + "-" * 70)
-    for metric in ["rho", "mae", "alpha", "beta"]:
-        vals = [np.nanmedian(becker_df[f"{metric}_{m}"])
-                for m in ["adj", "nonadj", "pce", "shap", "pawn"]]
-        print(f"  {metric:<12}  {vals[0]:>10.3f}  {vals[1]:>10.3f}"
-              f"  {vals[2]:>10.3f}  {vals[3]:>10.3f}  {vals[4]:>10.3f}")
-
-    # ── Boxplots: one panel per metric, one box per method ───────────
-    methods_labels = ["Adj.\nersatz", "Non-adj.\nersatz",
-                      "PCE\n(T_i)", "Shapley", "PAWN\n(max-KS)"]
-    metric_groups  = [
-        ("rho",   "ρ",   ["rho_adj",   "rho_nonadj",   "rho_pce",   "rho_shap",   "rho_pawn"]),
-        ("mae",   "MAE", ["mae_adj",   "mae_nonadj",   "mae_pce",   "mae_shap",   "mae_pawn"]),
-        ("alpha", "α",   ["alpha_adj", "alpha_nonadj", "alpha_pce", "alpha_shap", "alpha_pawn"]),
-        ("beta",  "β",   ["beta_adj",  "beta_nonadj",  "beta_pce",  "beta_shap",  "beta_pawn"]),
-    ]
-
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-    for ax, (_, ylabel, cols) in zip(axes, metric_groups):
-        data_plot = [becker_df[c].dropna().values for c in cols]
-        ax.boxplot(data_plot)
-        # Explicit tick labels: version-proof across all matplotlib releases
-        # (labels= was deprecated in 3.9 and later removed; tick_labels= fails
-        # on matplotlib < 3.9). Setting ticks after the call always works.
-        ax.set_xticks(range(1, len(methods_labels) + 1))
-        ax.set_xticklabels(methods_labels, fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=13)
-        ax.set_ylim(0, 1)
-        ax.tick_params(labelsize=9)
-    plt.suptitle("Becker metafunction: five estimators compared", fontsize=13)
-    plt.tight_layout()
-    plt.savefig("becker_boxplots.pdf", dpi=300)
-    print("  Saved becker_boxplots.pdf")
-
-
-    # ── Sensitivity-of-Sensitivity (SoS) study ────────────────────────────────
-    # All five method-level parameters are varied *simultaneously* in a global
-    # Sobol design (Jansen estimator on the outer loop).  No new model
-    # evaluations: the SoS outer loop re-applies the estimators with new
-    # parameters to the fixed Becker cache.
-    #
-    # Outer design: N_sos=2^7, k_sos=5  →  128 × 6 = 768 outer evaluations
-    # Each outer point recomputes metrics on N_cache=128 cached runs
-    # → total ≈ 98,304 discrepancy computations (< 2 min on a single core)
-
-    print("\n" + "="*60)
-    print("  Sensitivity-of-Sensitivity (SoS) study")
-    print("="*60)
-    print("  Building Becker cache (N_cache=128) …")
-    sos_cache = build_becker_cache(N_cache=128, seed=99)
-
-    sos_result = run_sos_study(sos_cache, N_sos=2**7, seed_sos=77)
-
-    print("\n  SoS T_i (rows=SoS parameters, cols=output metrics):")
-    print(sos_result.round(3).to_string())
-
-    # ── Heatmap of SoS T_i ────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(12, 4))
-    im = ax.imshow(sos_result.values, aspect="auto", cmap="YlOrRd",
-                   vmin=0, vmax=1)
-    ax.set_xticks(range(len(sos_result.columns)))
-    ax.set_xticklabels(sos_result.columns, fontsize=11, rotation=30, ha="right")
-    ax.set_yticks(range(len(sos_result.index)))
-    ax.set_yticklabels(sos_result.index, fontsize=11)
-    plt.colorbar(im, ax=ax, label="Total-order Sobol index $T_i$")
-    ax.set_title("SoS: which method parameters drive performance variability?",
-                 fontsize=14, fontweight="bold")
-    # Annotate cells
-    for i in range(len(sos_result.index)):
-        for j in range(len(sos_result.columns)):
-            v = sos_result.values[i, j]
-            if not np.isnan(v):
-                ax.text(j, i, f"{v:.2f}", ha="center", va="center",
-                        fontsize=11,
-                        color="white" if v > 0.5 else "black")
-    plt.tight_layout()
-    plt.savefig("sos_heatmap.pdf", dpi=300)
-    print("  Saved sos_heatmap.pdf")
-
-    # ── Barplot: which SoS parameter matters most, averaged across outputs ──
-    mean_Ti = sos_result.mean(axis=1).sort_values(ascending=False)
-    fig2, ax2 = plt.subplots(figsize=(8, 5))
-    ax2.bar(range(len(mean_Ti)), mean_Ti.values,
-            color=plt.cm.YlOrRd(mean_Ti.values))
-    ax2.set_xticks(range(len(mean_Ti)))
-    ax2.set_xticklabels(mean_Ti.index, fontsize=14, rotation=45)
-    ax2.set_ylabel("Mean $T_i$ across all output metrics", fontsize=14)
-    ax2.tick_params(labelsize=13)
-    ax2.set_title("SoS: global importance of method-level parameters",
-                  fontsize=14, fontweight="bold")
-    ax2.set_ylim(0, 1)
-    plt.tight_layout()
-    plt.savefig("sos_barplot.pdf", dpi=300)
-    print("  Saved sos_barplot.pdf")
-
-    print("\nDone.")
+class BeckerMetafunction:
+    """One random draw of the Becker (2020) metafunction, following the
+    structure of sensobol::metafunction (k_2 = 0.5, k_3 = 0.2):
+
+      * each input receives one of 13 univariate functions at random;
+      * coefficients are drawn from the mixture 0.7 N(0, 0.5) + 0.3 N(0, 5);
+      * ceil(k k_2) pairwise and ceil(k k_3) three-way interactions
+        (one if k = 3) are drawn without replacement.
+
+    Interaction terms are evaluated row-wise for every k (sensobol
+    collapses a single sampled pair/triplet to a constant, a quirk not
+    reproduced here).  R's random-number stream cannot be reproduced, so
+    a given epsilon defines a different (but identically distributed)
+    function than in R."""
+
+    def __init__(self, k: int, epsilon: int, k_2: float = 0.5,
+                 k_3: float = 0.2):
+        rng = np.random.default_rng(epsilon)
+        names = list(BECKER_FUNCTIONS)
+        self.k = k
+        self.funcs = [names[j] for j in rng.integers(0, len(names), k)]
+        comp = rng.choice(2, size=200, p=[0.7, 0.3])
+        z = np.tile(rng.standard_normal(100), 2)
+        coefs = z * np.sqrt(np.array([0.5, 5.0]))[comp]
+        self.c1 = rng.choice(coefs, size=k, replace=False)
+        pairs = list(combinations(range(k), 2))
+        n2 = min(len(pairs), int(math.ceil(k * k_2)))
+        self.pairs = [pairs[j] for j in rng.choice(len(pairs), n2,
+                                                   replace=False)]
+        self.c2 = rng.choice(coefs, size=n2, replace=True)
+        trips = list(combinations(range(k), 3))
+        n3 = 1 if len(trips) == 1 else min(len(trips),
+                                            int(math.ceil(k * k_3)))
+        self.trips = [trips[j] for j in rng.choice(len(trips), n3,
+                                                   replace=False)]
+        self.c3 = rng.choice(coefs, size=n3, replace=True)
+
+    def __call__(self, Xt: np.ndarray) -> np.ndarray:
+        F = np.column_stack([BECKER_FUNCTIONS[f](Xt[:, i])
+                             for i, f in enumerate(self.funcs)])
+        y = F @ self.c1
+        for c, (a, b) in zip(self.c2, self.pairs):
+            y = y + c * F[:, a] * F[:, b]
+        for c, (a, b, d) in zip(self.c3, self.trips):
+            y = y + c * F[:, a] * F[:, b] * F[:, d]
+        return y
+
+
+def _trunc_beta_ppf(u, a, b):
+    return beta_dist.ppf(u, a, b)            # truncation to [0,1] is void
+
+
+def _logitnorm_ppf(u, mu=0.0, sigma=3.16):
+    return expit(mu + sigma * norm.ppf(np.clip(u, 1e-15, 1 - 1e-15)))
+
+
+INPUT_DISTRIBUTIONS: List[Callable[[np.ndarray], np.ndarray]] = [
+    lambda u: u,                                         # 1 uniform
+    lambda u: _trunc_normal_ppf(u, 0.5, 0.15),           # 2 normal
+    lambda u: _trunc_beta_ppf(u, 8, 2),                  # 3 beta(8,2)
+    lambda u: _trunc_beta_ppf(u, 2, 8),                  # 4 beta(2,8)
+    lambda u: _trunc_beta_ppf(u, 2, 0.8),                # 5 beta(2,0.8)
+    lambda u: _trunc_beta_ppf(u, 0.8, 2),                # 6 beta(0.8,2)
+    lambda u: _logitnorm_ppf(u, 0.0, 3.16),              # 7 logit-normal
+]
+
+
+def input_distribution_map(k: int, phi: int, seed: int) -> List[int]:
+    """Distribution index (0..6) of every input: phi in 1..7 gives the
+    same family to all inputs; phi = 8 draws one family per input."""
+    if 1 <= phi <= 7:
+        return [phi - 1] * k
+    rng = np.random.default_rng(10_000 + seed)
+    return list(rng.integers(0, 7, k))
+
+
+def transform_inputs(U: np.ndarray, dist_idx: Sequence[int]) -> np.ndarray:
+    return np.column_stack([INPUT_DISTRIBUTIONS[d](U[:, i])
+                            for i, d in enumerate(dist_idx)])
+
+
+# =====================================================================
+# 8.  One-call evaluation of all given-data estimators
+# =====================================================================
+
+def all_estimators(U: np.ndarray, Y: np.ndarray, *, pce_family="legendre",
+                   fill_threshold=0.5, grid_exponent=0.5, pawn_bins=10,
+                   ties="ordinal") -> Dict[str, np.ndarray]:
+    """All estimators on one given-data sample (U uniform inputs)."""
+    T_pce, Sh, fit = pce_indices(U, Y, family=pce_family)
+    return {
+        "ersatz": ersatz_all(U, Y, adjusted=False),
+        "ersatz_unfilled": ersatz_all(U, Y, adjusted=True, fill=False,
+                                      grid_exponent=grid_exponent,
+                                      ties=ties),
+        "ersatz_adj": ersatz_all(U, Y, adjusted=True, fill=True,
+                                 fill_threshold=fill_threshold,
+                                 grid_exponent=grid_exponent, ties=ties),
+        "pce": T_pce,
+        "shapley": Sh,
+        "pawn": pawn_given_data(U, Y, n_bins=pawn_bins),
+        "_pce_degree": np.array([fit["p"] if fit else np.nan]),
+    }

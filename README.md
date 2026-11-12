@@ -1,188 +1,178 @@
-# Adjusted Ersatz Discrepancy for Global Sensitivity Analysis
+# An Adjusted Ersatz Discrepancy for Global Sensitivity Analysis: Theory and Benchmarks
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22233984.svg)](https://doi.org/10.5281/zenodo.22233984)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.NNNNNNN.svg)](https://doi.org/10.5281/zenodo.NNNNNNN)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-This repository contains the code, data, and supplementary material for:
+<!-- ACTION: replace XXXXXXX above (twice) and in CITATION.cff with the Zenodo DOI of release 2.0.0. -->
+
+Code, data and supplementary material for
 
 > Lo Piano, S., A. Lachi, R. Sheikholeslami, A. Puy, P. T. Roy,
-> A. Saltelli, **"Improving Discrepancy Measures for Global Sensitivity Analysis"**,
-> submitted to *Environmental Modelling and Software*, 2026.
+> A. Saltelli, **"An Adjusted Ersatz Discrepancy for Global Sensitivity
+> Analysis: Theory and Benchmarks"**, *Environmental Modelling and Software*
+> (revised version, 2026; submitted as "Improving Discrepancy Measures for
+> Global Sensitivity Analysis").
 
-The paper extends the *S-ersatz* discrepancy measure of
-[Puy, Roy & Saltelli (2024, *Technometrics*)](https://doi.org/10.1080/00401706.2024.2304341)
-with a rank-transform-plus-imputation adjustment, provides the first theoretical
-account of why the adjustment improves agreement with the total-order Sobol' index
-$T_i$ (a copula-theoretic proof, included as supplementary material), benchmarks the
-adjusted measure against three estimators that reuse the same input--output sample at
-no extra cost (polynomial chaos expansion, PCE-derived Shapley effects, and a
-PAWN-type screening index), and reports a joint (not one-at-a-time) sensitivity
-analysis of the screening method's own algorithmic parameters.
+The paper revisits the S-ersatz of
+[Puy, Roy & Saltelli (2024, *Technometrics*)](https://doi.org/10.1080/00401706.2024.2304341),
+a grid-occupancy statistic computed from the scatterplot of an input against
+the output, and proposes the **adjusted ersatz**: the output is rank-transformed
+before gridding and isolated empty cells are filled with a Moore-neighbourhood
+rule. Supplementary Material A proves that, under simple random sampling, the
+rank-transformed grid without fill is a histogram estimator of Borgonovo's
+delta that converges to a different f-divergence, and that the adjusted
+ersatz converges to a functional that lies between delta - 0.141 and
+delta + 0.048 for every dependence structure.
+The adjusted ersatz is compared at equal sample cost with a degree-adaptive
+polynomial chaos expansion (PCE), PCE-based Shapley effects and the
+given-data PAWN index, against total-order Sobol' indices and against delta.
+
+Version 2.0 corrects several errors of version 1.x; see [CHANGELOG.md](CHANGELOG.md).
 
 ## Repository structure
 
 ```
 .
 ├── src/
-│   └── discrepancy.py          # Main Python implementation (all analyses in this repo)
-├── R/                           # Original R implementation (Puy, Roy & Saltelli 2024),
-│   │                            # kept for provenance and cross-checking against the
-│   │                            # Python re-implementation. Not required to reproduce
-│   │                            # the paper's Python-based results.
-│   ├── discrepancy.R
-│   ├── code_discrepancy_reloaded.R
-│   ├── discrepancy_fun.R
-│   ├── jansen_fun.R
-│   ├── random_distributions_fun.R
-│   ├── savage_scores_fun.R
-│   └── triggers_fun.R
+│   ├── discrepancy.py        # library: designs, ersatz statistics, PCE/Shapley,
+│   │                         # PAWN, Jansen, Savage scores, test functions,
+│   │                         # Becker metafunction
+│   ├── experiments.py        # benchmarks, convergence, HYMOD, Becker, SoS
+│   ├── reference_indices.py  # reproduces the reference total-order indices (refs.json)
+│   ├── delta_reference.py    # large-sample delta references
+│   ├── hymod_reference.py    # surrogate-based references for HYMOD
+│   ├── null_distribution.py  # null distribution of the adjusted ersatz (SM A, Table 2)
+│   ├── theory_checks.py      # numerical and computer-assisted steps of SM A
+│   ├── screening_check.py    # screening errors against the theory (SM B, Section B.7)
+│   ├── summaries.py          # agreement metrics against T_i and delta_i
+│   ├── make_tables.py        # LaTeX tables of the paper and SM B
+│   ├── make_figures.py       # figures of the paper and SM B
+│   ├── refs.json             # reference total-order indices
+│   └── results/              # raw results used in the paper (CSV/JSON)
 ├── data/
-│   ├── hydro.csv                # HYMOD input sample
-│   ├── hydro2.csv               # HYMOD input sample with NSE output column
-│   └── README.md                # Data provenance and column descriptions
-├── results/
-│   ├── figures/                 # Method-illustration figures and result figures
-│   │                            # (the latter regenerated by src/discrepancy.py)
+│   ├── hydro.csv             # HYMOD inputs (Cmax, bexp, alpha, Rs, Rq)
+│   ├── hydro2.csv            # HYMOD inputs as run + NSE output
 │   └── README.md
-├── examples/
-│   └── minimal_bratley1988_example.py   # Single-function worked example (~1 s)
-├── requirements.txt
-├── environment.yml              # conda alternative
-├── CITATION.cff                 # Citation metadata (DOI updated on acceptance)
-├── LICENSE                      # MIT
-└── .gitignore
+├── R/                        # original R implementation (provenance; fixes in CHANGELOG)
+├── supplementary/            # Supplementary Materials A and B (PDF and LaTeX)
+├── examples/minimal_example.py
+├── requirements.txt          # minimum versions (Python 3.9 or later)
+├── requirements-lock.txt     # exact versions used for the results
+├── CHANGELOG.md
+├── CITATION.cff
+└── LICENSE                   # MIT
 ```
 
 ## Installation
 
+The code requires **Python 3.9 or later**. Check the interpreter that will
+create the environment first:
+
+```bash
+python3 --version          # Windows: py --list
+```
+
+With an older interpreter (for example Python 3.7), pip finds no NumPy 1.24
+or later and stops with `Could not find a version that satisfies the
+requirement numpy>=1.24`. Create the environment with a recent interpreter
+instead, for example Python 3.12:
+
 ```bash
 git clone https://github.com/Confareneoclassico/Discrepancy.git
 cd Discrepancy
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+python3.12 -m venv venv              # Windows: py -3.12 -m venv venv
+source venv/bin/activate             # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Python ≥3.10 is required (the code uses `X | Y` union-type hints in a few function
-signatures). Tested against Python 3.12 with the package versions pinned as comments
-in `requirements.txt`.
+or, with conda:
 
-## Reproducing the paper's results
+```bash
+conda create -n discrepancy python=3.12
+conda activate discrepancy
+pip install -r requirements.txt
+```
+
+`requirements.txt` gives minimum versions. The results of the paper were
+computed with Python 3.13 and the exact versions in `requirements-lock.txt`
+(`pip install -r requirements-lock.txt` reproduces that environment on
+Python 3.12 or later). With Python 3.9 and the minimum versions, the LaTeX
+tables and the output of `theory_checks.py` are identical to those of the
+locked environment, and a quick benchmark run (`--quick`) agrees with it to
+within 1e-15.
+
+## Reproducing the results
+
+Run from `src/`; every random stream is seeded. The folder `src/results/`
+already contains the raw results used in the paper, so the last line alone
+regenerates all tables and figures.
 
 ```bash
 cd src
-python discrepancy.py
+python experiments.py benchmarks     # N = 512, 100 replicates, 3 designs  (~2 min)
+python experiments.py convergence    # N = 2^4..2^13, 20 replicates        (~15 min)
+python experiments.py hymod          # HYMOD sample, blocks and subsets    (~5 min)
+python experiments.py becker         # 512 Becker configurations, 3 designs (~10 min)
+python experiments.py sos            # sensitivity of the sensitivity analysis: S_i and T_i (~1.5 h; needs becker)
+python reference_indices.py          # checks refs.json (~1 min; --seeds: 14 seeds, ~5 min)
+python delta_reference.py            # delta references (~5 min)
+python hymod_reference.py            # HYMOD references (~3 min)
+python null_distribution.py          # null distribution, SM A Table 2 (~8 min)
+python theory_checks.py              # verifications of SM A (~3 min)
+python screening_check.py            # screening errors and the theory, SM B Table S15 (~3 min)
+python summaries.py && python make_tables.py && python make_figures.py
 ```
 
-This single script runs, in order, every analysis reported in the paper:
+Times are for two cores. Raw results are written to `src/results/`, tables to
+`src/tables/` and figures to `src/figs/`.
 
-1. Seven benchmark functions (Bratley 1988, Bratley 1992, Ishigami, Oakley--O'Hagan,
-   Sobol' g-function, and the Multiverse/HDI model), each producing a per-input table
-   and a Savage-score/MAE/α/β summary table for all five estimators (`S_ersatz`,
-   `S_ersatz_adj`, PCE, Shapley, PAWN(max-KS)).
-2. A convergence study across sample sizes $N_s \in \{2^4,\dots,2^{13}\}$
-   (extended to $2^{15}$ for HYMOD) for all seven functions, saved as
-   `convergence_all.pdf`.
-3. The HYMOD real-world hydrological model (requires `data/hydro.csv` and
-   `data/hydro2.csv`), at $N=50{,}000$.
-4. A 512-run *Becker metafunction* stress test (`becker_boxplots.pdf`).
-5. A joint, Sobol'-design sensitivity-of-sensitivity analysis of five algorithmic
-   parameters of the screening methods (`sos_heatmap.pdf`, `sos_barplot.pdf`).
-
-**Expected runtime:** approximately 60 minutes on the authors' reference machine.
-The *Becker* stress test and SoS study, run with `multiprocessing`, dominate the
-runtime; the benchmark functions and convergence study complete in well under a
-minute each.
-
-All output (console tables and PDF figures) is written to the current working
-directory; move or symlink the four PDF outputs above into `results/figures/` if you
-want them alongside the pre-existing method-illustration figures.
-
-### Minimal example
-
-A self-contained worked example (Bratley 1988, three estimators, runs in about a
-second) is provided in `examples/minimal_bratley1988_example.py`:
+## Minimal example
 
 ```python
-import sys
-sys.path.insert(0, "src")
-from discrepancy import sobol_mat, bratley1988_fun, discrepancy_ersatz, pce_total_indices
+import sys; sys.path.insert(0, "src")
+import discrepancy as D
 
-params = [f"x{i}" for i in range(1, 9)]
-mat = sobol_mat(N=512, params=params, matrices=("A",), seed=123)
-Y = bratley1988_fun(mat)
-
-adj_ersatz = discrepancy_ersatz(mat, Y, params, adj=1)
-pce_Ti     = pce_total_indices(mat, Y, params)
-print(adj_ersatz)
-print(pce_Ti)
+U = D.design_matrix(512, 8, design="srs", seed=1)    # inputs on [0, 1]
+Y = D.sobol_g(U)
+print(D.ersatz_all(U, Y))                  # adjusted ersatz, one value per input
+T, Sh, fit = D.pce_indices(U, Y)           # PCE total-order indices and Shapley effects
+print(T, fit["p"], fit["loo"])
+print(D.pawn_given_data(U, Y))             # given-data PAWN (max KS)
 ```
+
+To screen inputs with the adjusted ersatz on its own scale, compare each value
+with an upper quantile of its distribution under independence, which under
+simple random sampling depends only on N (Supplementary Material A, Table 2).
 
 ## Data
 
-`data/hydro.csv` and `data/hydro2.csv` contain the HYMOD model's input sample and
-corresponding Nash--Sutcliffe efficiency output for the Leaf River catchment
-configuration of Vrugt et al. (2003). Column descriptions and provenance notes are
-in `data/README.md`.
+`data/hydro.csv` and `data/hydro2.csv` contain 50,000 runs of the HYMOD model
+for the Leaf River catchment on an Owen-scrambled Sobol' design mapped to
+uniform distributions; the output is the Nash-Sutcliffe efficiency. See
+`data/README.md`.
 
-## Known deviations from the original R implementation
+## Citing
 
-For full transparency and reproducibility, three intentional differences from the
-original R code of Puy, Roy & Saltelli (2024) are documented inline in
-`src/discrepancy.py` and summarised here:
-
-1. **Becker metafunction dimensionality cap.** The R implementation samples
-   $k \in \mathscr U\{3,50\}$. This repository caps $k \in \mathscr U\{3,15\}$ in the
-   *Becker* stress test (not in the seven fixed-dimension benchmark functions) because
-   polynomial chaos expansion becomes computationally prohibitive and frequently
-   underdetermined at $k>15$ with the sample sizes drawn in the design. This is noted
-   in the manuscript's discussion of the Becker stress test.
-2. **Sobol' quasi-random sampling.** Sampling uses `scipy.stats.qmc.Sobol` with Owen
-   scrambling (`scramble=True`), matching the statistical guarantees of the R
-   implementation's `qrng::sobol(..., randomize="Owen")`, but the two are not
-   bit-for-bit identical sequences. For the Becker metafunction QRN branch
-   specifically, the seed is hardcoded to 123 to match the R script's behaviour
-   exactly (see the comment in `sobol_mat`).
-3. **PAWN labelling.** The PAWN-type index in this code uses equal-width bins and the
-   maximum (not median/mean) Kolmogorov--Smirnov statistic across bins, and is labelled
-   `PAWN(max-KS)` throughout to distinguish it from the canonical PAWN index of Pianosi
-   & Wagener (2015).
-
-## Citing this work
-
-Until the manuscript is published, please cite the archived software release:
+Until the article is published, please cite the archived software release:
 
 ```bibtex
 @software{lopiano2026discrepancy,
   author    = {Lo Piano, Samuele and Lachi, Alessio and Sheikholeslami, Razi and
                Puy, Arnald and Roy, Pamphile T. and Saltelli, Andrea},
-  title     = {Adjusted Ersatz Discrepancy for Global Sensitivity Analysis},
+  title     = {An Adjusted Ersatz Discrepancy for Global Sensitivity Analysis:
+               Theory and Benchmarks},
   year      = {2026},
+  version   = {2.0.0},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.22233984},
+  doi       = {10.5281/zenodo.NNNNNNN},
   url       = {https://github.com/Confareneoclassico/Discrepancy}
-}
-```
-
-This work builds directly on:
-
-```bibtex
-@article{puy2024discrepancy,
-  author  = {Puy, Arnald and Roy, Pamphile T. and Saltelli, Andrea},
-  title   = {Discrepancy Measures for Global Sensitivity Analysis},
-  journal = {Technometrics},
-  volume  = {66},
-  number  = {3},
-  pages   = {347--357},
-  year    = {2024},
-  doi     = {10.1080/00401706.2024.2304341}
 }
 ```
 
 ## License
 
-This repository is released under the [MIT License](LICENSE).
+MIT, see [LICENSE](LICENSE).
 
 ## Contact
 
-alessio.lachi@unicamillus.org; samuele.lo.piano@pg.edu.pl
+a.lachi@unilink.it (corresponding author); samuele.lo.piano@pg.edu.pl

@@ -1,6 +1,24 @@
 ### Function
 
+# Exploratory R script of the first version of the study, kept for provenance.
+# The results of the paper are produced by the Python code in src/.
+# Corrections in version 2.0.0 (see CHANGELOG.md): the absolute paths of the
+# original machine are replaced by data_dir (HYMOD files of the repository),
+# ref_dir (AE_df.rds, the reference total-order indices of the benchmark
+# functions, which is not part of the repository) and out_dir (figures and
+# the regenerated HYMOD design, so that data/ is never overwritten); an input
+# value equal to 0 is assigned to the first row; the column of the rank grid
+# is computed in exact integer arithmetic; a constant output puts every point
+# in the first column of the S-ersatz grid; Savage scores average over ties;
+# the labels of xi and zeta in the Multiverse table follow the column order.
+# Run from the folder R/ of the repository.
+
 rm(list = ls())
+
+data_dir <- file.path("..", "data")
+ref_dir <- "."
+out_dir <- "output"
+dir.create(file.path(out_dir, "Ris"), recursive = TRUE, showWarnings = FALSE)
 library(sensobol)
 library(ggplot2)
 library(gridExtra)
@@ -170,8 +188,10 @@ scrambled_sobol <- function(matrices, A, B, C, order) {
   
 }
 
-update_matrix <- function(M) {
+update_matrix <- function(M, threshold = 0.5) {
   
+  # Moore fill (non-cascading): an empty cell is filled when at least a share
+  # `threshold` of its in-grid neighbours is occupied in the original matrix
   nr <- nrow(M)
   nc <- ncol(M)
   M_new <- M
@@ -181,19 +201,11 @@ update_matrix <- function(M) {
       
       if (M[i, j] == 0) {
         
-        # limiti dei vicini
-        r_min <- max(1, i - 1)
-        r_max <- min(nr, i + 1)
-        c_min <- max(1, j - 1)
-        c_max <- min(nc, j + 1)
+        block <- M[max(1, i - 1):min(nr, i + 1),
+                   max(1, j - 1):min(nc, j + 1), drop = FALSE]
         
-        neighbors <- M[r_min:r_max, c_min:c_max]
-        
-        # rimuove la cella centrale
-        neighbors <- neighbors[-which(row(neighbors) == i - r_min + 1 &
-                                        col(neighbors) == j - c_min + 1)]
-        
-        if (mean(neighbors) >= 0.5) {
+        # the cell itself is empty, so sum(block) counts the neighbours
+        if (length(block) > 1 && sum(block) / (length(block) - 1) >= threshold) {
           M_new[i, j] <- 1
         }
       }
@@ -222,11 +234,10 @@ jansen_fun <- function(d, N, params) {
 
 savage_scores_fun <- function(x) {
   
-  true.ranks <- rank(-x)
-  p <- sort(1 / true.ranks)
-  mat <- matrix(rep(p, length(p)), nrow = length(p), byrow = TRUE)
-  mat[upper.tri(mat)] <- 0
-  out <- sort(rowSums(mat), decreasing = TRUE)[true.ranks]
+  # rank r (1 = largest) receives sum_{j=r}^{k} 1/j; ties receive the average
+  k <- length(x)
+  base <- rev(cumsum(1 / (k:1)))
+  out <- ave(base[rank(-x, ties.method = "first")], x, FUN = mean)
   
   return(out)
   
@@ -270,19 +281,16 @@ s_ersatz <- function(mat) {
   
   mat_zeroes <- matrix(0, s, s)
   
-  # Compute index for x_i
+  # Compute index for x_i (x == 0 in row 1)
   
-  m <- ceiling(mat[, 1] * s)
+  m <- pmax(1, ceiling(mat[, 1] * s))
   
-  # Compute index for y
+  # Compute index for y: min-max scaling to [0, 1], y == 0 in column 1
   
   x <- mat[, 2]
-  n_norm <- (x-min(x))/(max(x)-min(x)) # Scale y to 0, 1
-  n <- ceiling(n_norm * s)
-  
-  # Turn y==0 to y == 1
-  
-  n <- ifelse(n == 0, 1, n)
+  range_x <- max(x) - min(x)
+  n_norm <- if (range_x > 0) (x - min(x)) / range_x else rep(0, length(x))
+  n <- pmax(1, ceiling(n_norm * s))
   
   # Merge and identify which cells are occupied by points
   
@@ -303,19 +311,15 @@ s_ersatz_adj <- function(mat, j) {
   
   s <- ceiling(sqrt(N))
   
-  # Compute index for x_i
+  # Compute index for x_i (x == 0 in row 1)
   
-  m <- ceiling(mat[, 1] * s)
+  m <- pmax(1, ceiling(mat[, 1] * s))
   
-  # Compute index for y
+  # Compute index for y: column max(1, ceiling((r - 1) s / N)) of the rank r,
+  # in exact integer arithmetic
   
-  x <- mat[, 2]
-  n_norm <- (rank(x, ties.method = "first")-1) / length(x)
-  n <- ceiling(n_norm * s)
-  
-  # Turn y==0 to y == 1
-  
-  n <- ifelse(n == 0, 1, n)
+  r <- rank(mat[, 2], ties.method = "first")
+  n <- pmax(1, ((r - 1) * s + N - 1) %/% N)
   
   # Merge and identify which cells are occupied by points
   
@@ -341,7 +345,7 @@ s_ersatz_adj <- function(mat, j) {
   
 }
 
-Ti = readRDS("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/AE_df.rds")
+Ti = readRDS(file.path(ref_dir, "AE_df.rds"))
 Ti = as.matrix(Ti)
 
 ### Bratley 1988 function
@@ -500,7 +504,7 @@ mat_dis = sobol_mat(N = N, params = params, matrices = "A")
 Y_dis = sobol_Fun(mat_dis)
 sob = Ti[2,]
 dis = discrepancy_ersatz(mat = mat_dis, Y = Y_dis, params = params, adj = 0)
-png("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/Ris/scatterplot5.png", width = 1200, height = 600)
+png(file.path(out_dir, "Ris", "scatterplot5.png"), width = 1200, height = 600)
 par(mfrow = c(2,4), mar=c(4,4,2,1))
 dis_adj = discrepancy_ersatz(mat = mat_dis, Y = Y_dis, params = params, adj = 1)
 par(mfrow = c(1,1))
@@ -521,7 +525,7 @@ params = c(paste("$x_", 1:8, "$", sep = ""), "$\\rho$", "MAE", "$\\alpha$", "$\\
 tab = data.frame(params, tab)
 print(xtable(tab), include.rownames = FALSE, sanitize.text.function = identity, booktabs = TRUE)
 
-png("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/Ris/scatterplot.png", width = 1200, height = 600)
+png(file.path(out_dir, "Ris", "scatterplot.png"), width = 1200, height = 600)
 n_cols <- ncol(mat_dis)
 par(mfrow = c(2,4), mar=c(4,4,2,1))
 for(j in 1:n_cols) {
@@ -538,7 +542,7 @@ for(j in 1:n_cols) {
 par(mfrow = c(1,1))
 dev.off()
 
-png("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/Ris/scatterplot2.png", width = 1200, height = 600)
+png(file.path(out_dir, "Ris", "scatterplot2.png"), width = 1200, height = 600)
 n_cols <- ncol(mat_dis)
 par(mfrow = c(2,4), mar=c(4,4,2,1))
 for(j in 1:n_cols) {
@@ -556,7 +560,7 @@ for(j in 1:n_cols) {
 par(mfrow = c(1,1))
 dev.off()
 
-png("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/Ris/scatterplot3.png", width = 1200, height = 600)
+png(file.path(out_dir, "Ris", "scatterplot3.png"), width = 1200, height = 600)
 n_cols <- ncol(mat_dis)
 par(mfrow = c(2,4), mar=c(4,4,2,1))
 for(j in 1:n_cols) {
@@ -652,7 +656,7 @@ tab = rbind(tab, c(NaN, round(sum(y_pred[,1] == 1 & y_true == 0) / sum(y_true ==
                         round(sum(y_pred[,2] == 1 & y_true == 0) / sum(y_true == 0),3)))
 tab = rbind(tab, c(NaN, round(sum(y_pred[,1] == 0 & y_true == 1) / sum(y_true == 1),3),
                         round(sum(y_pred[,2] == 0 & y_true == 1) / sum(y_true == 1),3)))
-params = c("$\\theta_1$", "$\\theta_2$", "$\\theta_3$", "$\\zeta$", "$\\xi$", "$\\rho$", "MAE", "$\\alpha$", "$\\beta$")
+params = c("$\\theta_1$", "$\\theta_2$", "$\\theta_3$", "$\\xi$", "$\\zeta$", "$\\rho$", "MAE", "$\\alpha$", "$\\beta$")
 tab = data.frame(params, tab)
 print(xtable(tab), include.rownames = FALSE, sanitize.text.function = identity, booktabs = TRUE)
 
@@ -670,12 +674,14 @@ mat_dis2[,2] = qunif(mat_dis[,2], min = 0.1, max = 2)
 mat_dis2[,3] = qunif(mat_dis[,3], min = 0.1, max = 0.98) 
 mat_dis2[,4] = qunif(mat_dis[,4], min = 0, max = 0.1) 
 mat_dis2[,5] = qunif(mat_dis[,5], min = 0.1, max = 0.98) 
-write.csv(mat_dis2, file="/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/hydro.csv")
-Y_dis = read.csv("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/hydro2.csv")[,7]
+# the same design is stored in data/hydro.csv; a copy is written to out_dir
+write.csv(mat_dis2, file = file.path(out_dir, "hydro.csv"))
+Y_dis = read.csv(file.path(data_dir, "hydro2.csv"))[,7]
 
 dis = discrepancy_ersatz(mat = mat_dis, Y = Y_dis, params = params, adj = 0)
 dis_adj = discrepancy_ersatz(mat = mat_dis, Y = Y_dis, params = params, adj = 1)
 
+# original reference values, superseded: see data/README.md and src/hymod_reference.py
 tab = round(cbind(sobol = c(0.506923, 0.017083, 0.072756, 0.002433, 0.72544),
                   ersatz = dis[,2], 
                   ersatz_adj = dis_adj[,2]), 3)
@@ -728,7 +734,7 @@ plot = ggplot(res, aes(x = N)) +
     plot.title = element_text(size = 18, face = "bold") # titolo del grafico
   )
 plot
-ggsave("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/Ris/trend_adj.pdf", plot = plot,
+ggsave(file.path(out_dir, "Ris", "trend_adj.pdf"), plot = plot,
        width = 10, height = 5, dpi = 300)
 
 params = paste("x", 1:5, sep = "")
@@ -764,5 +770,5 @@ plot = ggplot(res, aes(x = N)) +
     plot.title = element_text(size = 18, face = "bold") # titolo del grafico
   )
 plot
-ggsave("/Users/alessiolachi/Documents/3) UniCamillus/Articoli/8) discrepancy GSA/Ris/trend.pdf", plot = plot,
+ggsave(file.path(out_dir, "Ris", "trend.pdf"), plot = plot,
        width = 10, height = 5, dpi = 300)

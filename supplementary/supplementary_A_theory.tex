@@ -1,0 +1,530 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[authoryear,round]{natbib}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+% Unicode mappings for the text layer of the PDF (search, copy, text extraction):
+% the glyph names of the Computer Modern fonts, and the big delimiters and
+% operators of cmex, which glyphtounicode.tex does not cover
+\ifdefined\pdfgentounicode
+  \input{glyphtounicode}
+  \pdfgentounicode=1
+  \def\cmexuni#1#2{\pdfglyphtounicode{#1big}{#2}\pdfglyphtounicode{#1Big}{#2}%
+    \pdfglyphtounicode{#1bigg}{#2}\pdfglyphtounicode{#1Bigg}{#2}}
+  \cmexuni{parenleft}{0028}\cmexuni{parenright}{0029}
+  \cmexuni{bracketleft}{005B}\cmexuni{bracketright}{005D}
+  \cmexuni{braceleft}{007B}\cmexuni{braceright}{007D}
+  \cmexuni{floorleft}{230A}\cmexuni{floorright}{230B}
+  \cmexuni{ceilingleft}{2308}\cmexuni{ceilingright}{2309}
+  \cmexuni{angbracketleft}{27E8}\cmexuni{angbracketright}{27E9}
+  \cmexuni{slash}{002F}\cmexuni{backslash}{005C}\cmexuni{radical}{221A}
+  \pdfglyphtounicode{integraltext}{222B}\pdfglyphtounicode{integraldisplay}{222B}
+  \pdfglyphtounicode{summationtext}{2211}\pdfglyphtounicode{summationdisplay}{2211}
+  \pdfglyphtounicode{producttext}{220F}\pdfglyphtounicode{productdisplay}{220F}
+  \pdfglyphtounicode{uniontext}{22C3}\pdfglyphtounicode{uniondisplay}{22C3}
+  \pdfglyphtounicode{intersectiontext}{22C2}\pdfglyphtounicode{intersectiondisplay}{22C2}
+  \pdfglyphtounicode{vextendsingle}{2223}\pdfglyphtounicode{vextenddouble}{2225}
+  \pdfglyphtounicode{mapsto}{007C}% bar of \mapsto, which precedes the arrow
+\fi
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\newtheorem{example}[theorem]{Example}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\renewcommand{\qedsymbol}{\ensuremath{\square}}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\Leb}{\operatorname{Leb}}
+\newcommand{\TV}{\operatorname{TV}}
+\newcommand{\ind}{\mathbf{1}}
+\newcommand{\bX}{\mathbf{X}}
+\newcommand{\cV}{\mathcal{V}}
+\newcommand{\cN}{\mathcal{N}}
+\newcommand{\cZ}{\mathcal{Z}}
+\newcommand{\cS}{\mathcal{S}}
+\newcommand{\NPhi}{\Phi_{\mathcal N}}
+\newcommand{\Sadj}{\hat S^{\mathrm{adj}}_N}
+\newcommand{\Sun}{\hat S^{\circ}_N}
+\newcommand{\Sers}{\hat S^{\mathrm{ers}}_N}
+\newcommand{\Bin}{\operatorname{Bin}}
+\DeclareMathOperator{\rank}{rank}
+
+\title{\large\bfseries Supplementary Material A\\[3pt]
+Asymptotic theory of the adjusted ersatz discrepancy\\[3pt]
+\normalsize to \emph{An Adjusted Ersatz Discrepancy for Global Sensitivity Analysis: Theory and Benchmarks}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Overview}\label{sec:overview}
+
+This supplement characterises the statistic proposed in the main text, the adjusted ersatz discrepancy, and its two building blocks. All results are stated for a single input $X_i$. Every proposition, theorem and corollary is proved. Where a proof uses a numerical verification of an explicit inequality in one or two real variables, it is marked computer-assisted and the verified inequality is stated. Values obtained by numerical optimisation, quadrature or simulation are labelled as such. Table~\ref{tab:results} lists the results. The script \texttt{theory\_checks.py} of the repository reproduces every numerical verification and every constant quoted below, and \texttt{null\_distribution.py} reproduces Table~\ref{tab:null}. Constants defined by an equation in one variable ($\kappa_\lambda$, $p_0$, $p_1$, $\lambda_c$ and the optimiser of Remark~\ref{rem:psirank}) are computed in multiple-precision arithmetic (30 to 40 significant digits). The computer-assisted inequalities are verified on explicit grids by monotone bracketing, and the verified margins ($6\cdot10^{-3}$ and more) exceed the rounding error of double precision by many orders of magnitude. The other values are rounded to the digits shown.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}p{8.1cm}>{\raggedright\arraybackslash}p{4.1cm}@{}}
+\toprule
+Result & Content & Status\\
+\midrule
+Lemma~\ref{lem:ties} & Ties in the output: order of appearance is equivalent to random tie-breaking under simple random sampling & proof\\
+Proposition~\ref{prop:elementary} & Range of the statistics; the Moore fill can only decrease the statistic & proof\\
+Proposition~\ref{prop:histdelta} & The rank grid without fill is the histogram estimator of Borgonovo's $\delta$ & proof\\
+Proposition~\ref{prop:finiteN} & Finite-sample zero condition for a grid fixed in advance & proof\\
+Theorem~\ref{thm:limits} & Almost sure limits $\Phi_\lambda(C_i)$ and $\Psi_\lambda(C_i)$ under simple random sampling (in probability if the output has atoms and ties are broken by order of appearance); exponential concentration & proof\\
+Corollary~\ref{cor:ranking} & Consistency of the ranking and of a screening test for independence & proof\\
+Proposition~\ref{prop:phi} & $\Phi_\lambda-e^{-\lambda}$ is an $f$-divergence (an $f$-sensitivity index) & proof\\
+Proposition~\ref{prop:phidelta} & Bounds between $\Phi_\lambda$ and $\delta$; the upper bound is sharp & proof\\
+Proposition~\ref{prop:psi} & Zero condition, its failure on fine grids, approximation of $\delta$ by $\Psi_\lambda$ & proof; (iii) and (iv) computer-assisted; the threshold $0.7925$ numerical\\
+Proposition~\ref{prop:ersatz} & The original S-ersatz depends on the output marginal, and tends to one for unbounded outputs & proof\\
+Theorem~\ref{thm:grid} & Phase transition in the grid exponent, for $\alpha_g>1/4$ & proof\\
+Proposition~\ref{prop:sobol} & Relations with Sobol' indices; what a scatterplot shows & proof\\
+Theorem~\ref{thm:singleindex} & Rankings by $T_i$, $S_i$ and every $f$-sensitivity index agree in single-index Gaussian models & proof\\
+Remark~\ref{rem:psirank} & Rankings by $\Psi_\lambda$: a guarantee, its sharp margin and counterexamples & proof; sharp margin and Gaussian case numerical\\
+Proposition~\ref{prop:lhs} & Latin hypercube sampling under independence & proof\\
+Section~\ref{sec:designs} & Maximin Latin hypercube and scrambled Sobol' designs & simulation\\
+Section~\ref{sec:null} & Null distribution; meaning of the three thresholds of the main text & simulation\\
+Section~\ref{sec:verification} & Gaussian copulas: limits against simulation & numerical\\
+\bottomrule
+\end{tabular}
+\caption{Results of this supplement.}
+\label{tab:results}
+\end{table}
+
+In words, the main conclusions are the following. After the rank transformation, the occupancy grid without fill equals the plug-in histogram estimator of the moment-independent measure $\delta_i$ of \citet{borgonovo2007}. At the resolution used by the ersatz, about one point per cell, this estimator does not converge to $\delta_i$. Its limit is $e^{-1}$ plus a strictly convex $f$-divergence between the copula of $(X_i,Y)$ and the independence copula, so that its value under independence is $e^{-1}\approx0.368$. The Moore-neighbourhood fill changes the limit into a functional $\Psi_\lambda(C_i)$ that lies within $[\delta_i-0.1401,\ \delta_i+0.0471]$ for every dependence structure (default grid, $\lambda=1$; the upper bound is computer-assisted) and whose minimum, $\kappa_1=0.0471$, is attained exactly under independence. Under the regularity assumption and simple random sampling, the adjusted ersatz converges almost surely to $\Psi_\lambda(C_i)$ when the output distribution is continuous; when it has atoms and ties are broken by order of appearance, convergence in probability is established. The adjusted ersatz is therefore a fast, consistent estimator of a near-$\delta$ importance measure, but not of $\delta_i$ itself. Whenever $T_i=0$ its limit is the value under independence, $\kappa_\lambda$, which is $0.0471$ on the default grid and not zero; at finite $N$ the statistic of such an input is random, with the null distribution of Section~\ref{sec:null}. The limit, and hence for large $N$ the statistic (Corollary~\ref{cor:ranking}), ranks two inputs as $\delta$ does whenever their $\delta$ values differ by more than $0.18711$. Numerically the sharp margin is $0.176$: two inputs whose $\delta$ values differ by less than that can be ranked in either order. Theorem~\ref{thm:limits} is proved for simple random sampling; for an input independent of the output it extends to plain Latin hypercube sampling (Proposition~\ref{prop:lhs}), whereas for maximin Latin hypercubes and scrambled Sobol' sequences the evidence is simulation only (Sections~\ref{sec:designs} and \ref{sec:null}). The phase transition in the grid exponent (Theorem~\ref{thm:grid}) is established for $\alpha_g>1/4$.
+
+\section{Setting, notation and statistics}\label{sec:setting}
+
+\paragraph{Model and sampling.} The inputs $\bX=(X_1,\dots,X_k)$ are mutually independent with continuous distribution functions and, without loss of generality, uniformly distributed on $[0,1]$ (the estimators are applied to the probability-integral-transformed inputs; an input with atoms would first have to be replaced by its distributional transform, defined below for the output). The output is $Y=f(\bX)$ with $f$ measurable. A sample $(\bX^{(j)},Y_j)$, $j=1,\dots,N$, $Y_j=f(\bX^{(j)})$, is drawn by simple random sampling (SRS), that is, the $\bX^{(j)}$ are independent and uniform on $[0,1]^k$. Almost sure statements refer to nested samples (the first $N$ terms of one infinite sequence), and ``almost everywhere'' and ``almost every'' refer to Lebesgue measure on $[0,1]^2$. We fix an input $i$ and write $U_j=X_i^{(j)}$.
+
+\paragraph{Copula.} Let $F$ be the distribution function of $Y$ and $\zeta\sim U(0,1)$ independent of $\bX$. The distributional transform $V=F(Y-)+\zeta\,[F(Y)-F(Y-)]$ is uniform on $(0,1)$ and $F^{-1}(V)=Y$ almost surely \citep[Proposition~2.1]{ruschendorf2009}. The law $C_i$ of $(X_i,V)$ is therefore a copula of $(X_i,Y)$ \citep[Theorem~2.2]{ruschendorf2009}; if $F$ is continuous, $V=F(Y)$ and $C_i$ is the unique copula of $(X_i,Y)$ \citep{sklar1959,nelsen2006}. We write $C_i=C_i^{\mathrm{ac}}+C_i^{\mathrm{s}}$ for the Lebesgue decomposition, $c_i$ for the density of the absolutely continuous part, $m_i=C_i^{\mathrm{s}}([0,1]^2)$ for the mass of the singular part, and $\Pi$ for the independence copula. Note that $\int c_i\,\mathrm{d}u\,\mathrm{d}v=1-m_i$.
+
+\begin{assumption}[regularity]\label{ass:R}
+There is a closed set $K\subset[0,1]^2$ with $\Leb(K)=0$, containing the boundary of the unit square, such that $C_i^{\mathrm{s}}([0,1]^2\setminus K)=0$ and $c_i$ has a version that is continuous on $[0,1]^2\setminus K$.
+\end{assumption}
+
+Assumption~\ref{ass:R} allows unbounded densities (as for Gaussian copulas near the corners), densities with jumps along finitely many curves (for instance when $f$ is piecewise smooth, or when $Y$ has finitely many atoms, each of which produces a horizontal strip), and singular parts concentrated on finitely many curves (for instance $Y=g(X_i)$ with $g$ piecewise monotone).
+
+\paragraph{Grid.} For an integer $s\ge 1$ let $I_a=((a-1)/s,a/s]$, $a=1,\dots,s$, with $0$ assigned to $I_1$, and $Q_{ab}=I_a\times I_b$. The grid size is $s=\lceil N^{\alpha_g}\rceil$; the default is $\alpha_g=1/2$. We write $\lambda_N=N/s^2$.
+
+\begin{definition}[statistics]\label{def:stats}
+Let $a_j=\max\{1,\lceil sU_j\rceil\}$ be the row of observation $j$.
+\begin{enumerate}[label=(\alph*)]
+\item Rank grid. Let $R_j$ be the rank of $Y_j$ in $Y_1,\dots,Y_N$, ties being broken by order of appearance, and $b_j=\max\{1,\lceil (R_j-1)s/N\rceil\}$. The occupancy matrix is $G_{ab}=\ind\{\exists j:(a_j,b_j)=(a,b)\}$ and the \emph{unfilled statistic} is $\Sun=s^{-2}\sum_{a,b}(1-G_{ab})$.
+\item Moore fill. Let $\cN_{ab}$ be the set of the (at most eight) cells $(a',b')\neq(a,b)$ of the grid with $|a'-a|\le1$, $|b'-b|\le1$. For a threshold $\theta_f\in(0,1]$ set $\tilde G_{ab}=1$ if $G_{ab}=1$ or $|\cN_{ab}|^{-1}\sum_{\cN_{ab}}G_{a'b'}\ge\theta_f$, and $\tilde G_{ab}=0$ otherwise. The fill uses $G$ only (it does not cascade). The \emph{adjusted ersatz} is $\Sadj=s^{-2}\sum_{a,b}(1-\tilde G_{ab})$; the default is $\theta_f=1/2$.
+\item S-ersatz \citep{puy2024}. With $s=\lceil\sqrt N\rceil$, the column is computed from the min-max scaled output, $b^{\mathrm{u}}_j=\max\{1,\lceil s(Y_j-\min_l Y_l)/(\max_l Y_l-\min_l Y_l)\rceil\}$, the occupancy matrix is $G^{\mathrm{u}}_{ab}=\ind\{\exists j:(a_j,b^{\mathrm{u}}_j)=(a,b)\}$, and $\Sers=s^{-2}\sum_{a,b}(1-G^{\mathrm{u}}_{ab})$, without fill. The scaling requires $\max_lY_l>\min_lY_l$, which almost surely holds for all large $N$ unless $Y$ is almost surely constant; when all outputs coincide, the implementation assigns every point to the first column. \citet{puy2024} report the fraction of occupied cells, $1-\Sers$; we use the fraction of empty cells throughout, so that for all three statistics larger values indicate a more influential input.
+\end{enumerate}
+\end{definition}
+
+For an interior cell and $\theta_f=1/2$ the fill rule reads ``at least four of the eight neighbours are occupied''; on an edge (five neighbours) it reads ``at least three'', and in a corner (three neighbours) ``at least two''. The block of ranks assigned to column $b$ is $B_b=\{r:\max\{1,\lceil(r-1)s/N\rceil\}=b\}$. Counting the integers $r-1$ in $((b-1)N/s,\,bN/s]$ gives $|B_1|=\lfloor N/s\rfloor+1$, $|B_s|=\lceil N/s\rceil-1$ and $|B_b|\in\{\lfloor N/s\rfloor,\lceil N/s\rceil\}$ otherwise. In particular $\big||B_b|-N/s\big|\le1$ for every $b$, and every block is non-empty if $N>s$.
+
+\section{Exact finite-sample properties}\label{sec:finite}
+
+\begin{lemma}[ties]\label{lem:ties}
+Under SRS, the joint law of the point set $\{(a_j,b_j)\}_{j\le N}$ is the same whether ties among the $Y_j$ are broken by order of appearance or uniformly at random. With random tie-breaking, the ranks of the $Y_j$ coincide almost surely with the ranks of $V_j=F(Y_j-)+\zeta_j[F(Y_j)-F(Y_j-)]$, where $\zeta_1,\dots,\zeta_N$ are independent $U(0,1)$ variables independent of the sample.
+\end{lemma}
+
+\begin{proof}
+If $Y_j<Y_l$ then $V_j\le F(Y_j)\le F(Y_l-)\le V_l$, and equality of the extremes has probability zero. If $Y_j=Y_l$ then $V_j<V_l$ if and only if $\zeta_j<\zeta_l$. Hence ranking the $V_j$ is ranking the $Y_j$ and breaking ties with independent uniform marks, that is, at random. For the first claim, let $\pi$ be a uniformly distributed permutation of $\{1,\dots,N\}$, independent of the sample. The permuted sample $(U_{\pi(j)},Y_{\pi(j)})_j$ has the same law as the original one, because the observations are independent and identically distributed. Breaking ties by order of appearance in the permuted sample breaks the ties of the original sample in the uniformly random order induced by $\pi$, and the point set $\{(a_j,b_j)\}$ does not otherwise depend on the labels.
+\end{proof}
+
+Consequently, for statements about the law of the statistics at a fixed $N$, we may and do assume under SRS that $F$ is continuous, after replacing $Y$ by $V$, and that the ranks are those of $V_1,\dots,V_N$, which are almost surely distinct. Almost sure statements along nested samples refer to the statistics computed from the ranks of the $V_j$, that is, with ties broken at random.
+
+\begin{proposition}[elementary properties]\label{prop:elementary}
+For every sample with $N>s$:
+(i) $0\le\Sadj\le\Sun\le 1-1/s$; (ii) $\Sun\ge 1-N/s^2$; (iii) $\Sun$ and $\Sadj$ are invariant under strictly increasing transformations of the output.
+\end{proposition}
+
+\begin{proof}
+(i) Column $b$ contains the $|B_b|\ge1$ observations whose ranks lie in $B_b$, hence at least one occupied cell, so at least $s$ cells are occupied. The fill only turns empty cells into occupied ones, so $\tilde G\ge G$ cell by cell. (ii) At most $N$ cells are occupied. (iii) Ranks are invariant.
+\end{proof}
+
+For $N=s$ the last block is empty and the upper bound in (i) can fail. Part (i) also shows that the Moore fill cannot increase the statistic. What the fill changes is the limit functional and, in particular, its value under independence (Sections~\ref{sec:limits} and \ref{sec:functionals}).
+
+\begin{proposition}[histogram identity]\label{prop:histdelta}
+Let $n_{ab}=\#\{j:(a_j,b_j)=(a,b)\}$ and let $\hat P_N(Q_{ab})=n_{ab}/N$ be the empirical distribution of the rank-transformed sample on the grid. If $N\le s^2$ (in particular if $s=\lceil\sqrt N\rceil$), then, for any sampling design,
+\begin{equation}\label{eq:histdelta}
+\Sun=\frac12\sum_{a,b}\Big|\hat P_N(Q_{ab})-\frac1{s^2}\Big|=\max_{A}\big|\hat P_N(A)-\Pi(A)\big|,
+\end{equation}
+where the maximum is over unions $A$ of grid cells.
+\end{proposition}
+
+\begin{proof}
+Since $\sum_{a,b}(n_{ab}/N-s^{-2})=0$, half the sum of absolute values equals the sum of the negative parts, $\sum_{a,b}(s^{-2}-n_{ab}/N)_+$. If $n_{ab}\ge1$ then $n_{ab}/N\ge1/N\ge s^{-2}$ and the term vanishes; if $n_{ab}=0$ it equals $s^{-2}$. The second equality is the usual expression of the total variation distance between two probability vectors.
+\end{proof}
+
+The right-hand side of \eqref{eq:histdelta} is the plug-in histogram estimator of $\delta_i=\TV(C_i,\Pi)$ on the $s\times s$ grid, computed with the known uniform margins of the copula. It is the estimator of the measure of \citet{borgonovo2007} in its copula form (Proposition~\ref{prop:phidelta}; \citealp{wei2014copula}), which \citet[Equation~30]{plischke2019} place in niveau~3 of their classification; compare the given-data estimators of \citet{plischke2013} and the Bernstein-copula estimator of \citet[Section~4]{plischke2019}. Using the empirical margins $n_{a\cdot}n_{\cdot b}/N^2$ instead of $s^{-2}$, where $n_{a\cdot}$ and $n_{\cdot b}$ are the row and column totals, changes the right-hand side by at most $\frac12\sum_a|n_{a\cdot}/N-1/s|+\frac12\sum_b|n_{\cdot b}/N-1/s|$. The column term is at most $s/(2N)=O(N^{-1/2})$, because $n_{\cdot b}=|B_b|$ and $\big||B_b|-N/s\big|\le1$. The row term is at most $s/N$ for a Latin hypercube, whose rows contain $N/s+O(1)$ points, and is of order $(s/N)^{1/2}=O(N^{-1/4})$ under SRS.
+
+\begin{proposition}[finite-sample zero condition, fixed grid]\label{prop:finiteN}
+Let $N\ge2$ and let the sample be drawn by SRS. Let the columns be computed from the true $V_j$, $b_j^{\mathrm{or}}=\max\{1,\lceil sV_j\rceil\}$, and let $\hat S^{\mathrm{or}}_N$ be the resulting unfilled statistic. Then $\E\hat S^{\mathrm{or}}_N=s^{-2}\sum_{a,b}(1-C_i(Q_{ab}))^N\ge(1-s^{-2})^N$, with equality if and only if $C_i(Q_{ab})=s^{-2}$ for all cells.
+\end{proposition}
+
+\begin{proof}
+A cell is empty with probability $(1-C_i(Q_{ab}))^N$. The function $w\mapsto(1-w)^N$ is strictly convex on $[0,1]$ for $N\ge2$, and $\sum_{a,b}C_i(Q_{ab})=1$; apply Jensen's inequality.
+\end{proof}
+
+The equality case identifies only the masses of the grid cells: every copula that gives mass $s^{-2}$ to each cell, not only $\Pi$, attains the bound. Proposition~\ref{prop:finiteN} holds for every $N$ but only for a grid whose cells are fixed in advance, whereas the columns of the rank grid are random. Section~\ref{sec:limits} gives the asymptotic statement that covers both.
+
+\section{Limits under simple random sampling}\label{sec:limits}
+
+For $\lambda>0$ and $\theta_f\in(0,1]$ define
+\begin{equation}\label{eq:functionals}
+\Phi_\lambda(C)=\int_0^1\!\!\int_0^1 e^{-\lambda c(u,v)}\,\mathrm{d}u\,\mathrm{d}v,\qquad
+\Psi_\lambda(C)=\int_0^1\!\!\int_0^1 h_\lambda\big(c(u,v)\big)\,\mathrm{d}u\,\mathrm{d}v,
+\end{equation}
+where $c$ is the density of the absolutely continuous part of $C$ and
+\begin{equation}\label{eq:h}
+h_\lambda(t)=\Prob\big[\nu_0=0\big]\,\Prob\Big[\textstyle\sum_{n=1}^8\ind\{\nu_n>0\}<8\theta_f\Big]
+=e^{-\lambda t}\,\Prob\big[\Bin(8,1-e^{-\lambda t})<8\theta_f\big],
+\end{equation}
+with $\nu_0,\dots,\nu_8$ independent Poisson variables of mean $\lambda t$. In words, $h_\lambda(t)$ is the probability that a cell is empty after the fill when its own count and the counts of its eight neighbours are independent Poisson variables of mean $\lambda t$.
+
+\begin{theorem}[limits]\label{thm:limits}
+Let Assumption~\ref{ass:R} hold, let the sample be drawn by SRS, let the ranks be those of $V_1,\dots,V_N$, and let $s=s_N\to\infty$ with $N/s_N^2\to\lambda\in(0,\infty)$. Then, almost surely,
+\[
+\Sun\to\Phi_\lambda(C_i)\qquad\text{and}\qquad\Sadj\to\Psi_\lambda(C_i).
+\]
+Moreover, with $\cV$ the vector of order statistics of $V_1,\dots,V_N$ and every $t>0$,
+\begin{equation}\label{eq:conc}
+\Prob\big(|\Sun-\E[\Sun\mid\cV]|\ge t\big)\le2e^{-2t^2s^4/N},\qquad
+\Prob\big(|\Sadj-\E[\Sadj\mid\cV]|\ge t\big)\le2e^{-2t^2s^4/(81N)}.
+\end{equation}
+The same limits hold for the fixed grid of Proposition~\ref{prop:finiteN}. If $F$ has atoms and ties are broken by order of appearance, the statistics have at each $N$ the same law as those computed from the ranks of the $V_j$ (Lemma~\ref{lem:ties}), so the convergence holds in probability; almost sure convergence along nested samples is not established for this rule.
+\end{theorem}
+
+With $s=\lceil\sqrt N\rceil$ one has $N/s^2\to1$, so the default limits are $\Phi_1$ and $\Psi_1$; since $s^4/N\sim N$, the bounds \eqref{eq:conc} decay exponentially in $N$. The proof uses three lemmas.
+
+\begin{lemma}[{concomitants; \citealp{yang1977}; \citealp[Section~6.8]{david2003}}]\label{lem:concomitants}
+Let $(U_j,V_j)$, $j\le N$, be independent copies of $(U,V)$ with $V$ continuous, let $V_{(1)}<\dots<V_{(N)}$ be the order statistics, $U_{[r]}$ the $U$-value paired with $V_{(r)}$, and $v\mapsto P_v$ a regular conditional distribution of $U$ given $V=v$. Conditionally on $\cV=(V_{(1)},\dots,V_{(N)})$, the $U_{[r]}$ are independent and $U_{[r]}$ has law $P_{V_{(r)}}$.
+\end{lemma}
+
+\begin{proof}
+Conditionally on $(V_1,\dots,V_N)$, the $U_j$ are independent with $U_j\sim P_{V_j}$. The vector $(U_{[1]},\dots,U_{[N]})$ is obtained from $(U_1,\dots,U_N)$ by the permutation that sorts the $V_j$, which is a function of $(V_1,\dots,V_N)$. Hence, conditionally on $(V_1,\dots,V_N)$, the $U_{[r]}$ are independent with $U_{[r]}\sim P_{V_{(r)}}$. This conditional law depends on $(V_1,\dots,V_N)$ only through $\cV$, which gives the claim.
+\end{proof}
+
+\begin{lemma}[uniform closeness of order statistics]\label{lem:dkw}
+Let $d_N=\sqrt{\log N/N}$. Almost surely, for all $N$ large enough, $\max_{r\le N}|V_{(r)}-r/N|\le d_N$.
+\end{lemma}
+
+\begin{proof}
+With $F_N$ the empirical distribution function of the $V_j$, $|V_{(r)}-r/N|=|V_{(r)}-F_N(V_{(r)})|\le\sup_v|F_N(v)-v|$. By the Dvoretzky--Kiefer--Wolfowitz inequality with Massart's constant \citep{massart1990}, $\Prob(\sup_v|F_N(v)-v|>d_N)\le2e^{-2Nd_N^2}=2N^{-2}$, which is summable; apply the Borel--Cantelli lemma.
+\end{proof}
+
+\begin{lemma}[local Poisson limit]\label{lem:poisson}
+There is an event $\Omega_0$ of probability one, which does not depend on $(u,v)$, on which the following holds for every $(u,v)\in(0,1)^2\setminus K$. With $a=\lceil us\rceil$, $b=\lceil vs\rceil$ and $\mathfrak B$ the $3\times3$ block of cells $(a+\alpha,b+\beta)$, $\alpha,\beta\in\{-1,0,1\}$, the conditional law given $\cV$ of the vector of counts $(n_{a'b'})_{(a',b')\in\mathfrak B}$ converges to the law of nine independent Poisson variables with mean $\lambda c_i(u,v)$.
+\end{lemma}
+
+\begin{proof}
+\emph{Disintegration.} Let $O=[0,1]^2\setminus K$, which is open, and let $I\times J$ be a product of intervals with rational endpoints (open, closed or half-open) whose closure lies in $O$. Because $C_i^{\mathrm s}(O)=0$, every rational subinterval $J'\subset J$ satisfies $\int_{J'}P_v(I)\,\mathrm{d}v=C_i(I\times J')=\int_{J'}\!\int_Ic_i(u,v)\,\mathrm{d}u\,\mathrm{d}v$, so $P_v(I)=\int_Ic_i(u,v)\,\mathrm{d}u$ for every $v\in J$ outside a Lebesgue-null set. Let $\cN_0$ be the union of these null sets over the countably many such rectangles. If $v\notin\cN_0$ and $I$ is an interval with rational endpoints and $\bar I\times\{v\}\subset O$, compactness gives an open interval $J\ni v$ with rational endpoints and $\bar I\times\bar J\subset O$, hence $P_v(I)=\int_Ic_i(u,v)\,\mathrm{d}u$. Let $\Omega_0$ be the intersection of the event of Lemma~\ref{lem:dkw} with the event that no $V_j$ falls in $\cN_0$; since the $V_j$ are continuous, $\Omega_0$ has probability one.
+
+\emph{Localisation.} For $r\in B_{b'}$ we have $(r-1)s/N\in(b'-1,b']$ if $b'\ge2$ and $(r-1)s/N\le1$ if $b'=1$, so on $\Omega_0$ and for $N$ large, $|V_{(r)}-v|\le 2/s+1/N+d_N$ whenever $|b'-b|\le1$. Let $\rho_N=3/s+d_N\to0$ and $D_N=[u-\rho_N,u+\rho_N]\times[v-\rho_N,v+\rho_N]$. Because $K$ is closed and $(u,v)\notin K$, $D_N\cap K=\emptyset$ for $N$ large, and by continuity $\eta_N=\sup_{D_N}|c_i-c_i(u,v)|\to0$. For such $N$, every row interval $I_{a'}$ of the block (a half-open interval with rational endpoints) and every $V_{(r)}$ with $r\in B_{b-1}\cup B_b\cup B_{b+1}$ satisfy $\bar I_{a'}\times\{V_{(r)}\}\subset D_N\subset O$, hence
+\[
+\pi_{r,a'}:=P_{V_{(r)}}(I_{a'})=\int_{I_{a'}}c_i(u',V_{(r)})\,\mathrm{d}u',\qquad |s\,\pi_{r,a'}-c_i(u,v)|\le\eta_N .
+\]
+\emph{Generating function.} By Lemma~\ref{lem:concomitants}, each concomitant with rank in $B_{b'}$ falls independently in row $a'$ with probability $\pi_{r,a'}$, and in at most one row. For $z=(z_{a'b'})\in[0,1]^9$,
+\[
+\E\Big[\prod_{\mathfrak B}z_{a'b'}^{\,n_{a'b'}}\,\Big|\,\cV\Big]=\prod_{b'=b-1}^{b+1}\ \prod_{r\in B_{b'}}\Big(1+\sum_{a'=a-1}^{a+1}\pi_{r,a'}(z_{a'b'}-1)\Big).
+\]
+Write $x_r$ for the inner sum. Then $\max_r|x_r|\le3(c_i(u,v)+\eta_N)/s\to0$, and $\sum_{r\in B_{b'}}\pi_{r,a'}=|B_{b'}|(c_i(u,v)+O(\eta_N))/s\to\lambda c_i(u,v)$, because $|B_{b'}|=N/s+O(1)$ and $N/s^2\to\lambda$. Since $\log(1+x)=x+O(x^2)$ and $\sum_r x_r^2\le\max_r|x_r|\sum_r|x_r|\to0$, the generating function converges to $\prod_{\mathfrak B}\exp\{\lambda c_i(u,v)(z_{a'b'}-1)\}$, the generating function of nine independent Poisson variables with mean $\lambda c_i(u,v)$. Convergence of generating functions on $[0,1]^9$ implies convergence in distribution of $\mathbb N^9$-valued vectors; see \citet{kolchin1978} for Poisson limits in allocation problems of this kind.
+\end{proof}
+
+\begin{proof}[Proof of Theorem~\ref{thm:limits}]
+Write $\Sun=\int_0^1\!\int_0^1\ind\{n_{a_N(u)b_N(v)}=0\}\,\mathrm{d}u\,\mathrm{d}v$ with $a_N(u)=\lceil us\rceil$, $b_N(v)=\lceil vs\rceil$, and similarly $\Sadj$ with the indicator that the cell is empty after the fill. Fix $(u,v)\in(0,1)^2\setminus K$. For $N$ large the cell $(a_N(u),b_N(v))$ is interior, and both indicators are functions of the nine counts of Lemma~\ref{lem:poisson}: the first is $\ind\{n_{ab}=0\}$, the second is $\ind\{n_{ab}=0\}\ind\{\sum_{\cN_{ab}}\ind\{n_{a'b'}>0\}<8\theta_f\}$. As the counts take values in a discrete set, Lemma~\ref{lem:poisson} gives, on $\Omega_0$,
+\[
+\Prob(n_{ab}=0\mid\cV)\to e^{-\lambda c_i(u,v)},\qquad \Prob(\text{cell empty after fill}\mid\cV)\to h_\lambda(c_i(u,v)).
+\]
+Since $\Leb(K)=0$ this holds for almost every $(u,v)$, and the integrands are bounded by one; because $\Omega_0$ does not depend on $(u,v)$, Fubini's theorem and dominated convergence give $\E[\Sun\mid\cV]\to\Phi_\lambda(C_i)$ and $\E[\Sadj\mid\cV]\to\Psi_\lambda(C_i)$ on $\Omega_0$.
+
+For the fluctuations, conditionally on $\cV$ the statistics are functions of the independent concomitants $U_{[1]},\dots,U_{[N]}$ (Lemma~\ref{lem:concomitants}), and the column of each concomitant is fixed by its rank. Changing one concomitant moves one point within its column, which can be done by removing the point and then adding it in its new cell. Removing it can only empty a cell of $G$, and adding it can only fill one, so the number of empty cells of $G$ changes by at most one in each step, in opposite directions, and $\Sun$ changes by at most $s^{-2}$. The fill map $G\mapsto\tilde G$ is monotone ($G\le G'$ cell by cell implies $\tilde G\le\tilde G'$), and a change of $G$ in one cell can alter $\tilde G$ only in that cell and its at most eight neighbours. Hence the removal can only empty cells of $\tilde G$, at most nine, and the addition can only fill cells of $\tilde G$, at most nine, so $\Sadj$ changes by at most $9s^{-2}$. McDiarmid's bounded-difference inequality \citep{mcdiarmid1989}, applied conditionally on $\cV$, gives \eqref{eq:conc}. As $s^4/N\to\infty$ proportionally to $N$, the right-hand sides are summable for every $t>0$, and the Borel--Cantelli lemma yields $\Sun-\E[\Sun\mid\cV]\to0$ and $\Sadj-\E[\Sadj\mid\cV]\to0$ almost surely.
+
+For the fixed grid the columns are the intervals $I_b$, and the concomitants in column $b$ are those with $V_{(r)}\in I_b$. Their number is binomial with mean $N/s$; by Bernstein's inequality and a union bound over the $s$ columns it equals $(N/s)(1+o(1))$ uniformly in $b$, almost surely, and the same argument applies.
+\end{proof}
+
+\begin{corollary}[consistency of the ranking and of screening]\label{cor:ranking}
+Let the assumptions of Theorem~\ref{thm:limits} hold for every input.
+\begin{enumerate}[label=(\roman*)]
+\item If $\Psi_\lambda(C_1),\dots,\Psi_\lambda(C_k)$ are pairwise distinct, then almost surely, for all $N$ large enough, the ranking of the inputs by $\Sadj$ coincides with their ranking by $\Psi_\lambda(C_i)$. The same holds for $\Sun$ and $\Phi_\lambda$.
+\item Let $\theta_f=1/2$ and $\lambda\ge3/4$, and let $\tau_N\to0$ with $\tau_N(N/\log N)^{1/2}\to\infty$ (for instance $\tau_N=N^{-1/4}$). The test that declares $X_i$ influential if $\Sadj>\kappa_{\lambda_N}+\tau_N$ is consistent against every fixed alternative: almost surely, for all $N$ large enough, it declares influential every input with $C_i\neq\Pi$ and non-influential every input independent of $Y$.
+\end{enumerate}
+\end{corollary}
+
+\begin{proof}
+(i) follows from the almost sure convergence of finitely many statistics to distinct limits.
+
+(ii) Alternatives. If $C_i\neq\Pi$, then $\Psi_\lambda(C_i)>\kappa_\lambda=h_\lambda(1)$ by Proposition~\ref{prop:psi}(ii), while $\kappa_{\lambda_N}+\tau_N\to\kappa_\lambda$ by continuity of $\lambda\mapsto h_\lambda(1)$. Since $\Sadj\to\Psi_\lambda(C_i)$ almost surely, the input is eventually declared influential.
+
+Independence. If $X_i$ and $Y$ are independent, the concomitants are independent and uniform on $(0,1)$ whatever the value of $\cV$, and the block sizes are deterministic, so $\mu_N=\E[\Sadj\mid\cV]$ is a number. We show that $|\mu_N-\kappa_{\lambda_N}|\le(13+27\lambda_N)/s+27/s^2$, a bound that is informative only for large $s$ and is used here only asymptotically. The $4s-4$ boundary cells contribute at most $4/s$. For an interior cell, the counts of its $3\times3$ block are, column by column, the counts in three of the $s$ rows of $|B_{b'}|$ independent uniform points, and the three columns are independent. Each point falls in these three rows with probability $3/s$. Given the number of points that fall in the three rows, both the multinomial counts and three independent Poisson variables with mean $|B_{b'}|/s$ split these points equally likely among the rows, so the total variation distance between the two laws equals that between $\Bin(|B_{b'}|,3/s)$ and the Poisson law with mean $3|B_{b'}|/s$. By Le Cam's inequality \citep[Chapter~1]{barbour1992} it is at most $|B_{b'}|(3/s)^2\le9\lambda_N/s+9/s^2$. Since $\big||B_{b'}|/s-\lambda_N\big|\le1/s$, each of these Poisson laws is within total variation $1/s$ of the Poisson law with mean $\lambda_N$. The probability that the cell is empty after the fill is therefore within $27\lambda_N/s+27/s^2+9/s$ of its value $\kappa_{\lambda_N}=h_{\lambda_N}(1)$ for nine independent Poisson$(\lambda_N)$ counts, which proves the bound. Since $s^2\sim N/\lambda$ and $\tau_N\sqrt N\to\infty$, $|\mu_N-\kappa_{\lambda_N}|\le\tau_N/2$ for $N$ large. Then, by the one-sided form of \eqref{eq:conc},
+\[
+\Prob\big(\Sadj>\kappa_{\lambda_N}+\tau_N\big)\le\Prob\big(\Sadj-\mu_N\ge\tau_N/2\big)\le\exp\{-\tau_N^2s^4/(162N)\},
+\]
+and since $s^4/N\sim N/\lambda^2$ and $\tau_N^2N/\log N\to\infty$, the right-hand side is summable. The Borel--Cantelli lemma concludes.
+\end{proof}
+
+This is the precise sense in which the adjusted ersatz is consistent: it is a strongly consistent estimator of the functional $\Psi_\lambda(C_i)$ when the output distribution is continuous, a weakly consistent one (convergence in probability) when the output has atoms and ties are broken by order of appearance, and it yields a consistent test for independence. In the latter case (i) and (ii) hold with probability tending to one, instead of almost surely for all $N$ large enough, because the statistics have the same law at each $N$ as with random tie-breaking (Lemma~\ref{lem:ties}). The adjusted ersatz is not a consistent estimator of $\delta_i$ or of $T_i$, which are different functionals.
+
+\section{The limit functionals}\label{sec:functionals}
+
+Recall that the $f$-divergence of a copula $C$ from $\Pi$, for convex $f:[0,\infty)\to\mathbb R$ with $f(1)=0$, is $D_f(C\|\Pi)=\int f(c)\,\mathrm{d}\Pi+m\,f'(\infty)$, where $f'(\infty)=\lim_{t\to\infty}f(t)/t$ \citep{csiszar1967,liese2006}. For the copula $C_i$ of Section~\ref{sec:setting}, $D_f(C_i\|\Pi)$ equals the $f$-information $I_f(X_i;Y)=D_f(P_{X_iY}\|P_{X_i}\otimes P_Y)$. Indeed $(X_i,V)$ is obtained from $(X_i,Y)$ by a Markov kernel acting on the second coordinate (the distributional transform), and $(X_i,Y)=(X_i,F^{-1}(V))$ almost surely; the same kernels map $P_{X_i}\otimes P_Y$ to $P_{X_i}\otimes P_V=\Pi$ and back, so the data-processing inequality \citep{liese2006} applies in both directions. Moreover $I_f(X_i;Y)=\E_{X_i}[D_f(P_{Y|X_i}\|P_Y)]$, which is the $f$-sensitivity index of \citet{rahman2016}; see \citet{borgonovo2016} and \citet{daveiga2015} for the common rationale of such dependence-based measures. Borgonovo's measure corresponds to $f(t)=|t-1|/2$ \citep{borgonovo2007,borgonovo2011}, and mutual information to $f(t)=t\log t$. For absolutely continuous $C$, $D_f(C\|\Pi)$ is the measure $\delta_h$ of \citet[Equation~31]{plischke2019} with $h(t)=f(t)/t$ for $t>0$, which satisfies their conditions $h(1)=0$ and $t\mapsto h(1/t)$ convex, so these indices belong to their niveau~3.
+
+\begin{proposition}[$\Phi_\lambda$ is an $f$-divergence]\label{prop:phi}
+Let $f_\lambda(t)=e^{-\lambda t}-e^{-\lambda}$, which is strictly convex with $f_\lambda(1)=0$ and $f_\lambda'(\infty)=0$. For every copula $C$, $\Phi_\lambda(C)-e^{-\lambda}=D_{f_\lambda}(C\|\Pi)$. Consequently:
+\begin{enumerate}[label=(\roman*)]
+\item $e^{-\lambda}\le\Phi_\lambda(C)\le1$; $\Phi_\lambda(C)=e^{-\lambda}$ if and only if $C=\Pi$, and $\Phi_\lambda(C)=1$ if and only if $C$ is singular;
+\item $\Phi_\lambda(C_i)-e^{-\lambda}=I_{f_\lambda}(X_i;Y)$, the $f_\lambda$-sensitivity index of $X_i$; in particular it is invariant under strictly increasing transformations of $X_i$ and of $Y$;
+\item (data processing) if $X_i'$ is obtained from $X_i$ through a Markov kernel, independently of $Y$ given $X_i$, then $I_{f_\lambda}(X_i';Y)\le I_{f_\lambda}(X_i;Y)$, and similarly for transformations of the output.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+The identity is the definition of $D_{f_\lambda}$ with $f'_\lambda(\infty)=0$. (i) By Jensen's inequality, $\int e^{-\lambda c}\ge\exp(-\lambda\int c)=e^{-\lambda(1-m)}\ge e^{-\lambda}$. Equality in the second step requires $m=0$, and in the first, by strict convexity, $c$ constant; hence $c\equiv1$ and $C=\Pi$. The upper bound holds because $e^{-\lambda c}\le1$, with equality only where $c=0$. (ii) is the identity recalled before the proposition. (iii) is the data-processing inequality for $f$-divergences \citep{csiszar1967,liese2006}, applied to the joint law and to the product of the margins, which are transformed by the same kernel.
+\end{proof}
+
+\begin{proposition}[$\Phi_\lambda$ and $\delta$]\label{prop:phidelta}
+Let $\delta(C)=\TV(C,\Pi)=\sup_A|C(A)-\Pi(A)|$. Then $\delta(C)=\int(1-c)_+\,\mathrm{d}\Pi$, and $\delta(C_i)=\delta_i$, the measure of \citet{borgonovo2007}, which equals $\frac12\E_{X_i}\int|f_Y(y)-f_{Y|X_i}(y)|\,\mathrm{d}y$ when densities exist. For every $\lambda>0$ and every copula $C$,
+\[
+\Phi_\lambda(C)-e^{-\lambda}\le(1-e^{-\lambda})\,\delta(C),
+\]
+and the constant $1-e^{-\lambda}$ is sharp. If $C$ is absolutely continuous with $c\le\bar c$, then $\Phi_\lambda(C)-e^{-\lambda}\ge2\lambda^2e^{-\lambda\bar c}\,\delta(C)^2$. For $\lambda=1$: $2e^{-\bar c}\delta^2\le\Phi_1-e^{-1}\le(1-e^{-1})\,\delta$.
+\end{proposition}
+
+\begin{proof}
+Let $\cS$ be a Lebesgue-null set with $C^{\mathrm s}([0,1]^2\setminus\cS)=0$. For every Borel set $A$, $\Pi(A)-C(A)=\int_A(1-c)\,\mathrm{d}\Pi-C^{\mathrm s}(A)\le\int(1-c)_+\,\mathrm{d}\Pi$, with equality for $A=\{c<1\}\setminus\cS$. Since both measures have mass one, $\sup_A(C(A)-\Pi(A))=\sup_A(\Pi(A)-C(A))$, which proves the first claim. The total variation distance is the $f$-divergence with $f(t)=|t-1|/2$, so $\delta(C_i)=\TV(P_{X_iY},P_{X_i}\otimes P_Y)$ by the identity recalled at the beginning of this section, and this is Borgonovo's definition \citep{borgonovo2007,plischke2019}.
+
+Upper bound. $f_\lambda$ is convex and decreasing with $f_\lambda(1)=0$, so $f_\lambda(t)\le(1-t)f_\lambda(0)=(1-t)(1-e^{-\lambda})$ for $t\in[0,1]$ (the chord lies above the graph) and $f_\lambda(t)\le0$ for $t\ge1$. As $f'_\lambda(\infty)=0$, $D_{f_\lambda}(C\|\Pi)=\int f_\lambda(c)\,\mathrm{d}\Pi\le(1-e^{-\lambda})\int(1-c)_+\,\mathrm{d}\Pi$. For sharpness, let $a\in(0,1)$ and let $C_a$ have density $0$ on the square $[0,a]^2$, density $1$ elsewhere, and a singular part of mass $a^2$ spread uniformly on the diagonal of $[0,a]^2$. Its margins are uniform, $\delta(C_a)=a^2$ and $\Phi_\lambda(C_a)-e^{-\lambda}=a^2(1-e^{-\lambda})$.
+
+Lower bound. Let $\bar f(t)=f_\lambda(t)+\lambda e^{-\lambda}(t-1)$, which is convex with $\bar f(1)=\bar f'(1)=0$. If $C$ is absolutely continuous, $\int(c-1)\,\mathrm{d}\Pi=0$ and $D_{f_\lambda}(C\|\Pi)=\int\bar f(c)\,\mathrm{d}\Pi$. On $[0,\bar c]$, $\bar f''(t)=\lambda^2e^{-\lambda t}\ge\lambda^2e^{-\lambda\bar c}$, so $\bar f(t)\ge\frac12\lambda^2e^{-\lambda\bar c}(t-1)^2$, and by the Cauchy--Schwarz inequality $D_{f_\lambda}\ge\frac12\lambda^2e^{-\lambda\bar c}(\int|c-1|\,\mathrm{d}\Pi)^2=2\lambda^2e^{-\lambda\bar c}\delta^2$.
+\end{proof}
+
+\begin{remark}[the histogram estimator of $\delta$ at critical resolution]\label{rem:inconsistent}
+Propositions~\ref{prop:histdelta}, \ref{prop:phidelta} and Theorem~\ref{thm:limits} together answer the question whether the rank grid estimates $\delta$. It is the histogram estimator of $\delta$, but when $N/s^2\to\lambda\in(0,1]$, the regime of the ersatz, it converges to $\Phi_\lambda(C_i)$. Since $e^{-\lambda t}\ge e^{-t}\ge(1-t)_+$ with equality only at $t=0$, $\Phi_\lambda(C_i)\ge\delta_i$ with equality only for singular $C_i$; under independence the limit is $e^{-\lambda}$ instead of $0$. Consistency for $\delta$ requires $N/s^2\to\infty$ \citep{devroye1985}, a regime in which the identity \eqref{eq:histdelta} no longer holds and the empty-cell fraction has a different limit (Theorem~\ref{thm:grid}).
+\end{remark}
+
+\begin{proposition}[properties of $\Psi_\lambda$; default $\theta_f=1/2$]\label{prop:psi}
+Let $\varphi(p)=p^6(56-140p+120p^2-35p^3)$. Then $h_\lambda(t)=\varphi(e^{-\lambda t})$, and:
+\begin{enumerate}[label=(\roman*)]
+\item $\varphi$ is strictly increasing on $[0,1]$ with $\varphi(0)=0$ and $\varphi(1)=1$; hence $h_\lambda$ is strictly decreasing, $h_\lambda(0)=1$, and $\Psi_\lambda(C)\le1$ with equality if and only if $C$ is singular. The value under independence is $\kappa_\lambda:=\Psi_\lambda(\Pi)=\varphi(e^{-\lambda})$; $\kappa_1=0.04708$.
+\item (zero condition; constants computed in 40-digit arithmetic) For every $\lambda\ge3/4$, $h_\lambda(t)\ge h_\lambda(1)+h_\lambda'(1)(t-1)$ for all $t\ge0$, with equality only at $t=1$. Consequently $\Psi_\lambda(C)\ge\kappa_\lambda$ for every copula $C$, with equality if and only if $C=\Pi$.
+\item (fine grids) Conversely, if the inequality of (ii) fails at some $t\neq1$, there is a copula with $\Psi_\lambda(C)<\kappa_\lambda$. The inequality fails for every $\lambda\in(-\log p_1,\lambda_c)=(0.0422,0.4815)$, where $p_1$ is defined in the proof of (ii) and $\lambda_c=0.481480$ is the root of $L(e^{-\lambda})=1$, with $L(p)=\varphi(p)-p\log(p)\,\varphi'(p)$. On $[\lambda_c,3/4)$ the inequality holds (computer-assisted), with equality only at $t=1$ for $\lambda>\lambda_c$ and only at $t\in\{0,1\}$ for $\lambda=\lambda_c$, and the conclusion of (ii) holds there too. For $\lambda>0.0422$ the bound $\Psi_\lambda\ge\kappa_\lambda$ therefore holds exactly when $\lambda\ge\lambda_c$.
+\item (approximation of $\delta$; upper bound computer-assisted) For every $\lambda>0$ and every copula $C$, $\Psi_\lambda(C)\ge\delta(C)-\varepsilon_\lambda$, where $\varepsilon_\lambda:=\sup_{0\le t\le1}\big[(1-t)-h_\lambda(t)\big]$, and for $\lambda\in[1/2,1]$, $\Psi_\lambda(C)\le\delta(C)+\kappa_\lambda$. Both bounds are sharp. Numerically $\varepsilon_1=0.14003$ (attained at $t=0.586$), so that $\delta(C)-0.1401\le\Psi_1(C)\le\delta(C)+0.0471$, and $\varepsilon_\lambda=0$ for $\lambda\le0.7925$; for the grid used at $N=512$ ($s=23$, $\lambda=512/529$), $\kappa=0.0548$ and $\varepsilon=0.1208$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+For $\theta_f=1/2$, $h_\lambda(t)=p\,\Prob[\Bin(8,1-p)\le3]$ with $p=e^{-\lambda t}$, and $\Prob[\Bin(8,1-p)\le3]=\sum_{n=5}^{8}\binom8n p^n(1-p)^{8-n}$; expanding gives $\varphi$.
+
+(i) $\varphi'(p)=p^5r_3(p)$ with $r_3(p)=336-980p+960p^2-315p^3$. The derivative $r_3'(p)=-980+1920p-945p^2$ has negative discriminant ($-18000$), so $r_3$ is strictly decreasing, and $r_3(1)=1>0$; hence $\varphi'>0$ on $(0,1]$. The other claims follow, using that $\Psi_\lambda(C)=1$ forces $h_\lambda(c)=1$, that is $c=0$, almost everywhere.
+
+(ii) Write $p=e^{-\lambda t}$. Then $h_\lambda''(t)=\lambda^2p\,q(p)$ with $q(p)=\frac{\mathrm d}{\mathrm dp}[p\,\varphi'(p)]=p^5(2016-6860p+7680p^2-2835p^3)$. The cubic factor has the real roots $p_0=0.719781\ldots$, $p_1=0.958720\ldots$ and $p_2=1.030494\ldots$ (exact real-root isolation) and is positive on $(0,p_0)$. Hence $h_\lambda$ is strictly convex on $[t_0,\infty)$ with $t_0=-\log(p_0)/\lambda$. For $\lambda\ge3/4$, $e^{-\lambda}\le e^{-3/4}=0.472<p_0$, so $t=1$ lies in this interval and the tangent line $\ell(t)=h_\lambda(1)+h_\lambda'(1)(t-1)$ lies strictly below $h_\lambda$ on $[t_0,\infty)\setminus\{1\}$. On $[0,t_0)$, $h_\lambda(t)>h_\lambda(t_0)=\varphi(p_0)=0.604780$, while $\ell$ is decreasing, so $\ell(t)\le\ell(0)=L(e^{-\lambda})$. Since $L'(p)=-\log(p)\,q(p)>0$ on $(0,p_0)$, $L(e^{-\lambda})\le L(e^{-3/4})=0.594543<0.604780$. This proves the tangent inequality. Integrating it, $\Psi_\lambda(C)=\int h_\lambda(c)\,\mathrm{d}\Pi\ge h_\lambda(1)+h_\lambda'(1)(\int c\,\mathrm{d}\Pi-1)=\kappa_\lambda-h'_\lambda(1)m\ge\kappa_\lambda$, because $h_\lambda'(1)<0$; equality forces $m=0$ and $c=1$ almost everywhere.
+
+(iii) For every probability density $\varrho$ on $[0,1]$, $c(u,v)=\varrho((u+v)\bmod1)$ is the density of a copula, a circulant copula, because each of its sections integrates to one. Let $t_1\neq1$ with $h_\lambda(t_1)<\ell(t_1)$, and let $\varrho$ take the value $t_1$ on a set of measure $w$ and a value $t_2$ on the other side of $1$ elsewhere, with $wt_1+(1-w)t_2=1$. Because $\ell$ is affine with $\ell(1)=\kappa_\lambda$,
+\[
+\Psi_\lambda-\kappa_\lambda=w\,[h_\lambda(t_1)-\ell(t_1)]+(1-w)\,[h_\lambda(t_2)-\ell(t_2)].
+\]
+As $t_2\to1$, $w=(t_2-1)/(t_2-t_1)$ is of order $|t_2-1|$ while the second bracket is of order $(t_2-1)^2$, so $\Psi_\lambda<\kappa_\lambda$ once $|t_2-1|$ is small enough. A simpler example at $\lambda=0.2268$ (the value of $\lambda_N$ for $N=1600$ and $\alpha_g=0.6$) is the band copula with density $2$ on $\{(u+v)\bmod1<1/2\}$ and $0$ elsewhere: $\delta=0.5$ and $\Psi_\lambda=0.714<\kappa_\lambda=0.750$. For $\lambda\in[-\log p_0,\lambda_c)$, $e^{-\lambda}$ lies in $(e^{-\lambda_c},p_0]$, where $L$ is increasing, so $\ell(0)=L(e^{-\lambda})>L(e^{-\lambda_c})=1=h_\lambda(0)$ and the inequality fails at $t=0$. For $\lambda\in(-\log p_1,-\log p_0)$, $e^{-\lambda}\in(p_0,p_1)$, where the cubic factor of $q$ is negative, so $h_\lambda''(1)<0$ and $h_\lambda$ lies strictly below its tangent on a punctured neighbourhood of $t=1$.
+
+For $\lambda\in[\lambda_c,3/4)$ write $D(t)=h_\lambda(t)-\ell(t)$, where $\ell(t)=\kappa_\lambda+\lambda\psi(e^{-\lambda})(1-t)$ and $\psi(p)=p\,\varphi'(p)$, so that $h_\lambda'(t)=-\lambda\psi(e^{-\lambda t})$. Since $\psi'=q$, $\psi$ is increasing on $(0,p_0)$ and on $(p_1,1]$, with $\psi(1)=1$. As in (ii), $h_\lambda$ is strictly convex on $[t_0,\infty)$, where $t_0=-\log(p_0)/\lambda\le0.683<1$, so $D>0$ there except at $t=1$, and it remains to show $D\ge0$ on $[0,t_0)$. (a) For $\lambda\le0.55$ and $t\le0.07$, $e^{-\lambda t}\ge e^{-0.0385}>p_1$, so $\psi(e^{-\lambda t})\le1$, while $\psi(e^{-\lambda})\ge\psi(e^{-0.55})=1.0936$. Hence $D'(t)=\lambda[\psi(e^{-\lambda})-\psi(e^{-\lambda t})]>0$, and $D(t)\ge D(0)=1-L(e^{-\lambda})\ge0$, with equality only for $t=0$ and $\lambda=\lambda_c$, because $L$ is increasing on $(0,p_0)$. (b) On the rest of $[0,t_0)\times[\lambda_c,3/4)$ the inequality was verified by monotone bracketing, as in (iv): for $t\in[t_a,t_b]$ and $\lambda\in[\lambda_1,\lambda_2]$, $h_\lambda(t)\ge\varphi(e^{-\lambda_2t_b})$ and $\ell(t)\le\varphi(e^{-\lambda_1})+\lambda_2\psi(e^{-\lambda_1})(1-t_a)$, because $\varphi$ is increasing and $e^{-\lambda_1}<p_0$, and the difference of the bounds is positive (at least $0.0076$) on a partition into $161{,}897$ cells of size $10^{-3}\times10^{-3}$. Integrating as in (ii) gives $\Psi_\lambda(C)\ge\kappa_\lambda$, with equality only if $m=0$ and $c\in\{0,1\}$ almost everywhere (only $c=1$ if $\lambda>\lambda_c$). Since each section of the density of an absolutely continuous copula integrates to one, $c\in\{0,1\}$ forces $c=1$ almost everywhere, so equality holds only for $C=\Pi$, also at $\lambda=\lambda_c$.
+
+(iv) By Proposition~\ref{prop:phidelta}, $\Psi_\lambda(C)-\delta(C)=\int[h_\lambda(c)-(1-c)_+]\,\mathrm d\Pi$, so it suffices to bound the integrand. The lower bound holds for every $\lambda>0$ by the definition of $\varepsilon_\lambda$ on $[0,1]$ and because $h_\lambda\ge0=(1-t)_+$ on $(1,\infty)$. For the upper bound, $h_\lambda(t)\le h_\lambda(1)=\kappa_\lambda$ for $t\ge1$ by monotonicity. On $[0,1]$ the inequality $h_\lambda(t)\le1-t+\kappa_\lambda$ was verified by monotone bracketing: for $t\in[t_a,t_b]$ and $\lambda\in[\lambda_1,\lambda_2]$ one has $h_\lambda(t)\le\varphi(e^{-\lambda_1t_a})$ and $1-t+\kappa_\lambda\ge1-t_b+\varphi(e^{-\lambda_2})$, and the difference of the bounds is negative (at most $-0.006$) on a partition of $[0,0.98]\times[1/2,1]$ into cells of size $5\cdot10^{-5}\times10^{-3}$. On $[0.98,1]$ the function $t\mapsto1-t+\kappa_\lambda-h_\lambda(t)$ vanishes at $t=1$ and is decreasing, because $|h_\lambda'(t)|=\lambda\psi(e^{-\lambda t})<1$ with $\psi(p)=p\varphi'(p)$: $\psi$ is increasing on $(0,p_0)$, since $\psi'=q$, and $e^{-\lambda t}\le e^{-0.49}<p_0$ there, so bounding $\lambda$ by the upper end and $e^{-\lambda t}$ by its value at the lower ends of the same cells gives $|h'_\lambda|\le0.6231$. The upper bound is attained at $C=\Pi$. The lower bound is approached by circulant copulas whose density equals the maximiser $t^\ast$ of $(1-t)-h_\lambda(t)$ on a set of measure $w$ and a large value $t_2$ elsewhere, with $wt^\ast+(1-w)t_2=1$: then $\Psi_\lambda-\delta=w[h_\lambda(t^\ast)-(1-t^\ast)]+(1-w)h_\lambda(t_2)\to-\varepsilon_\lambda$ as $t_2\to\infty$.
+\end{proof}
+
+\begin{remark}[what the fill does]\label{rem:fill}
+Figure~5(a) of the main text displays the three integrands $(1-t)_+$, $e^{-t}$ and $h_1(t)$. The rank grid without fill converges to a functional that is compressed into $[e^{-1},1]$ and exceeds $\delta$ by up to $e^{-1}\approx0.37$ (Remark~\ref{rem:inconsistent}). The Moore fill is a local denoising step: an empty cell surrounded by occupied cells is the typical outcome of sampling variability in a region of positive density, and it is filled, while an empty cell in an empty region is kept. In the limit this replaces $e^{-\lambda t}$ by $h_\lambda(t)$, a smooth surrogate of the integrand $(1-t)_+$ of $\delta$. For Gaussian copulas, numerically, $|\Psi_1-\delta|\le0.0471$, the maximum being attained at independence, and $\delta-\Psi_1\le0.023$, with the maximum near correlation $0.61$ (240 values of the correlation in $[0,0.999]$; Section~\ref{sec:verification}).
+\end{remark}
+
+\begin{proposition}[the S-ersatz depends on the output distribution]\label{prop:ersatz}
+Let the sample be drawn by SRS, with $s=\lceil\sqrt N\rceil$.
+\begin{enumerate}[label=(\roman*)]
+\item Let $X_i$ and $Y$ be independent and let $Y$ have bounded support $[y_{\mathrm{lo}},y_{\mathrm{hi}}]$ and a density $f_Y$ that is continuous and positive on $(y_{\mathrm{lo}},y_{\mathrm{hi}})$. Let $\tilde f(v)=(y_{\mathrm{hi}}-y_{\mathrm{lo}})\,f_Y(y_{\mathrm{lo}}+v(y_{\mathrm{hi}}-y_{\mathrm{lo}}))$ be the density of the min-max scaled output. Then $\Sers\to\int_0^1e^{-\tilde f(v)}\,\mathrm dv$ almost surely, and the limit is at least $e^{-1}$, with equality if and only if $Y$ is uniform on its support.
+\item If the support of $Y$ is unbounded, then $\Sers\to1$ almost surely, whatever the dependence between $X_i$ and $Y$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+The sample minimum and maximum converge almost surely to $y_{\mathrm{lo}}$ and $y_{\mathrm{hi}}$. Conditionally on the indices and values of the two extreme observations, the other $N-2$ outputs are independent with the law of $Y$ restricted to $(\min_lY_l,\max_lY_l)$, and independent of their $U_j$. (i) A cell $(a,b)$ therefore receives each of these points independently with probability $s^{-1}\varpi_b$, where $\varpi_b$ is the conditional probability of the $b$-th of $s$ equal subintervals of $(\min_lY_l,\max_lY_l)$. For fixed $v\in(0,1)$ and $b=\lceil vs\rceil$, continuity of $f_Y$ gives $s\,\varpi_b\to\tilde f(v)$ almost surely, so the conditional probability that the cell is empty tends to $e^{-\tilde f(v)}$. Dominated convergence and the bounded-difference argument of Theorem~\ref{thm:limits} (the two extreme points change the count by at most $2s^{-2}$) complete the proof of the limit. Jensen's inequality gives $\int e^{-\tilde f}\ge e^{-\int\tilde f}=e^{-1}$, with equality if and only if $\tilde f\equiv1$.
+
+(ii) Suppose, say, that the support of $Y$ is unbounded above. Then $\max_lY_l\to\infty$ almost surely, so the range $\rho_N=\max_lY_l-\min_lY_l$ diverges. Fix $M>0$. The columns of the grid are intervals of length $\rho_N/s$ of the output scale, so at most $2Ms/\rho_N+2=o(s)$ columns meet $[-M,M]$, and they contain at most $o(s^2)$ cells. Every other occupied cell contains a point with $|Y_j|>M$, and by the strong law of large numbers there are at most $N\{\Prob(|Y|>M)+o(1)\}$ such points. Hence the fraction of occupied cells is at most $o(1)+(N/s^2)\{\Prob(|Y|>M)+o(1)\}$, whose limit is $\Prob(|Y|>M)$, arbitrarily small for $M$ large. No independence is used.
+\end{proof}
+
+\begin{remark}\label{rem:ersatz}
+By Proposition~\ref{prop:ersatz}(ii) the S-ersatz tends to one for outputs with unbounded support, even under independence. The approach is slow: for Gaussian and log-normal outputs the simulated values under independence grow from $0.473$ and $0.721$ at $N=2^8$ to $0.59$ and $0.89$ at $N=2^{16}$ (uniform output: $0.368$; output $\mathrm{Beta}(2,2)$: $0.409$, against the limit $\int_0^1e^{-6v(1-v)}\mathrm dv=0.4097$). When $X_i$ and $Y$ are dependent and the output is bounded, the argument of (i) combined with Lemma~\ref{lem:poisson} gives the limit $\iint\exp\{-c(u,\tilde F(v))\tilde f(v)\}\,\mathrm du\,\mathrm dv$, where $\tilde F$ is the distribution function of the scaled output; it depends on the output marginal as well as on the copula. The S-ersatz is therefore not copula-based in the sense of \citet[Table~1]{plischke2019}: like the correlation ratio, it is invariant under increasing affine transformations of the output but not under other strictly increasing ones. The rank transformation of the first modification removes this dependence (Proposition~\ref{prop:elementary}(iii) and Theorem~\ref{thm:limits}).
+\end{remark}
+
+\section{Grid resolution}\label{sec:grid}
+
+\begin{theorem}[phase transition in $\alpha_g$]\label{thm:grid}
+Let Assumption~\ref{ass:R} hold, let the sample be drawn by SRS, and let $s=\lceil N^{\alpha_g}\rceil$ with $\alpha_g>1/4$.
+\begin{enumerate}[label=(\roman*)]
+\item If $\alpha_g<1/2$ and $\cZ=\{(u,v)\notin K:c_i(u,v)=0\}$ satisfies $\Leb(\cZ\setminus\operatorname{int}\cZ)=0$, then $\Sun\to\Leb(\cZ)$ and $\Sadj\to\Leb(\cZ)$ almost surely. In particular both statistics tend to zero for every copula with a positive density, whatever the strength of the dependence (for instance every Gaussian copula with correlation in $(-1,1)$).
+\item If $\alpha_g=1/2$, Theorem~\ref{thm:limits} applies with $\lambda=1$.
+\item If $\alpha_g>1/2$, then $\Sadj\ge1-9N/s^2$ and $\Sun\ge1-N/s^2$, so both statistics tend to one for every copula.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+(iii) At most $N$ cells are occupied, and a cell can be filled only if one of its neighbours is occupied, so at most $8N$ cells are filled. (i) Here $N/s^2\to\infty$. For $(u,v)\notin K$ with $c_i(u,v)>0$, the localisation step of Lemma~\ref{lem:poisson} gives $\sum_{r\in B_b}\pi_{r,a}\ge(N/s^2)(c_i(u,v)-\eta_N)(1+o(1))\to\infty$, so $\Prob(n_{ab}=0\mid\cV)\le\exp(-\sum_r\pi_{r,a})\to0$, and the cell is a fortiori not empty after the fill. For $(u,v)\in\operatorname{int}\cZ$, for $N$ large the whole neighbourhood $D_N$ lies in $\operatorname{int}\cZ$, all $\pi_{r,a'}$ of the $3\times3$ block vanish, and the cell and its neighbours are empty with probability one, so it stays empty after the fill. Dominated convergence gives the limit of the conditional means. The bounded-difference bounds \eqref{eq:conc} hold unchanged, and $s^4/N=N^{4\alpha_g-1}(1+o(1))$ grows polynomially when $\alpha_g>1/4$, so they are summable.
+\end{proof}
+
+Theorem~\ref{thm:grid} explains why the grid exponent dominates the sensitivity analysis of the method in the main text. At fixed $N$, $\lambda_N=N/\lceil N^{\alpha_g}\rceil^2$ lies in $\big(N^{-0.2}(1+N^{-0.6})^{-2},\,N^{0.2}\big]$ when $\alpha_g\in[0.4,0.6]$, because $N^{\alpha_g}\le\lceil N^{\alpha_g}\rceil<N^{\alpha_g}+1$; for $N=1600$ it ranges from $0.23$ ($\alpha_g=0.6$, $s=84$) to $4.0$ ($\alpha_g=0.4$, $s=20$). Over this range the value under independence $\kappa_\lambda$ moves from $0.75$ to $2\cdot10^{-9}$, which shifts all values of the statistic and its screening errors. On the finest grids, $0.0422<\lambda<\lambda_c=0.4815$ (for $N=1600$, when $s\ge58$, that is, $\alpha_g>\log57/\log1600=0.5480\ldots$), $\kappa_\lambda$ is no longer a lower bound: dependence can then lower the statistic below its value under independence (Proposition~\ref{prop:psi}(iii)). A limit equal to zero for every copula with a positive density holds only in regime (i), not for the default grid. The theorem does not classify $\alpha_g\le1/4$, for which the concentration bounds \eqref{eq:conc} no longer tend to zero; such grids, with $s\le\lceil N^{1/4}\rceil$, lie far below the range $\alpha_g\in[0.4,0.6]$ explored in the main text.
+
+\section{Bivariate measures and Sobol' indices}\label{sec:sobol}
+
+For independent inputs and $Y\in L^2$ with $\Var(Y)>0$, $S_i=\Var(\E[Y\mid X_i])/\Var(Y)$ and $T_i=\E[\Var(Y\mid\bX_{\sim i})]/\Var(Y)$ \citep{homma1996,saltelli2008}. By the factor-fixing result of \citet{sobol2001}, fixing $X_i$ at an independent random value changes the output by a mean squared error equal to $2\,T_i\Var(Y)$. $T_i=0$ is therefore the operational definition of a non-influential input.
+
+\begin{proposition}[relations with Sobol' indices]\label{prop:sobol}
+Let the inputs be independent and $Y\in L^2$ with $\Var(Y)>0$.
+\begin{enumerate}[label=(\roman*)]
+\item If $T_i=0$ then $X_i$ and $Y$ are independent, so $C_i=\Pi$, $\delta_i=0$, every $f$-sensitivity index vanishes, $\Phi_\lambda(C_i)=e^{-\lambda}$ and $\Psi_\lambda(C_i)=\kappa_\lambda$.
+\item The converse fails: for $Y=(X_1+X_2)\bmod1$, $X_1$ and $Y$ are independent, but $T_1=1$.
+\item $S_i>0$ if and only if $\E[Y\mid X_i]$ is not almost surely constant.
+\item If $T_i=S_i$ (equivalently, $Y=f^{(1)}(X_i)+f^{(2)}(\bX_{\sim i})$ almost surely), then $Y-\E[Y\mid X_i]$ is independent of $X_i$. Hence, if the conditional distribution of $Y-\E[Y\mid X_i]$ given $X_i$ varies with $X_i$ (for instance if the conditional variance is not constant), then $X_i$ interacts with other inputs, $T_i>S_i$.
+\item The converse of (iv) fails, by the example in (ii).
+\item A small $T_i$ does not imply a small $\delta_i$: for $Y=\ind\{X_2>1/2\}+\varepsilon X_1$ with $0<\varepsilon<1$, $T_1=\varepsilon^2/(3+\varepsilon^2)$, whereas $X_1$ is a function of $Y$, so $C_1$ is singular and $\delta_1=\Phi_\lambda(C_1)=\Psi_\lambda(C_1)=1$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+(i) $T_i=0$ means $\Var(Y\mid\bX_{\sim i})=0$ almost surely, so $Y=\E[Y\mid\bX_{\sim i}]$ is a function of $\bX_{\sim i}$, which is independent of $X_i$; then $V$, a randomised function of $Y$, is independent of $X_i$ too. The remaining claims follow from Propositions~\ref{prop:phi} and \ref{prop:psi}(i). (ii) For every $x\in[0,1]$, $(x+X_2)\bmod1$ is uniform, so the conditional law of $Y$ given $X_1=x$ does not depend on $x$; and $\Var(Y\mid X_2)=\Var(Y)$, so $T_1=1$. (iii) is the definition. (iv) In the ANOVA decomposition $Y=\sum_uf_u(\bX_u)$, $T_i-S_i=\sum_{u\ni i,|u|\ge2}\Var(f_u)/\Var(Y)$, so $T_i=S_i$ if and only if every term with $i\in u$, $|u|\ge2$, vanishes. Then $\E[Y\mid X_i]=f_\emptyset+f_i(X_i)$ and $Y-\E[Y\mid X_i]=\sum_{u\not\ni i}f_u(\bX_u)$, a function of $\bX_{\sim i}$. (vi) $\Var(Y)=1/4+\varepsilon^2/12$ and $\E[\Var(Y\mid X_2)]=\varepsilon^2/12$. Since $\varepsilon<1$, $X_1=(Y-\ind\{Y\ge1\})/\varepsilon$ is a function of $Y$, so $(X_1,V)$ lies on the graph of a function and $C_1$ is singular; the last claims follow from Propositions~\ref{prop:phi}(i), \ref{prop:phidelta} and \ref{prop:psi}(i).
+\end{proof}
+
+Proposition~\ref{prop:sobol} states precisely what a scatterplot of $(X_i,Y)$, and any statistic computed from it, can reveal. The conditional mean carries the first-order effect. A change of the conditional distribution beyond a location shift, such as a conditional variance that depends on $X_i$, is the imprint of interactions involving $X_i$, of any order (for $Y=X_1X_2X_3$ with centred inputs, $\E[Y\mid X_1]=0$ while $\Var(Y\mid X_1)$ is proportional to $X_1^2$). Interactions that leave the conditional distribution unchanged, as in (ii), are invisible to every bivariate measure. A bivariate statistic therefore measures the dependence between $X_i$ and $Y$, which includes but does not exhaust the contributions to $T_i$.
+
+\begin{theorem}[single-index Gaussian models]\label{thm:singleindex}
+Let $Z_j=\NPhi^{-1}(X_j)$, where $\NPhi$ is the standard normal distribution function, let $a\in\mathbb R^k\setminus\{0\}$, $\rho_j=a_j/\|a\|$, $W=\sum_j\rho_jZ_j\sim N(0,1)$, and $Y=g(W)$ with $g$ measurable and $g(W)$ not almost surely constant.
+\begin{enumerate}[label=(\roman*)]
+\item If $g(W)\in L^2$, with Hermite expansion $g(w)=\sum_{n\ge0}\gamma_n\,\mathrm{He}_n(w)/\sqrt{n!}$, then
+\[
+S_i=\frac{\sum_{n\ge1}\gamma_n^2\rho_i^{2n}}{\sum_{n\ge1}\gamma_n^2},\qquad T_i=\frac{\sum_{n\ge1}\gamma_n^2\,[1-(1-\rho_i^2)^n]}{\sum_{n\ge1}\gamma_n^2},
+\]
+both strictly increasing functions of $|\rho_i|$.
+\item For every convex $f$ with $f(1)=0$, $|\rho_j|\le|\rho_i|$ implies $I_f(X_j;Y)\le I_f(X_i;Y)$. This applies to $\delta_i$, to mutual information and to $\Phi_\lambda(C_i)-e^{-\lambda}$.
+\item Consequently no $f$-sensitivity index ranks an input strictly above an input with a larger total-order index: the rankings by $T_i$, by $S_i$ and by any $f$-sensitivity index agree up to ties.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+(i) From the generating function $e^{tw-t^2/2}=\sum_n\mathrm{He}_n(w)t^n/n!$ and $\sum_j\rho_j^2=1$,
+\[
+e^{tW-t^2/2}=\prod_je^{t\rho_jZ_j-t^2\rho_j^2/2}\quad\Longrightarrow\quad \frac{\mathrm{He}_n(W)}{\sqrt{n!}}=\sum_{|\alpha|=n}\sqrt{\frac{n!}{\alpha!}}\,\rho^\alpha\,\prod_j\frac{\mathrm{He}_{\alpha_j}(Z_j)}{\sqrt{\alpha_j!}}
+\]
+\citep[see also][Chapter~3]{janson1997}. The products on the right are orthonormal in $L^2$, so the variance of the component indexed by $\alpha$ is $\gamma_{|\alpha|}^2(|\alpha|!/\alpha!)\rho^{2\alpha}$. The total index collects the components with $\alpha_i\ge1$; by the multinomial theorem $\sum_{|\alpha|=n,\alpha_i\ge1}(n!/\alpha!)\rho^{2\alpha}=(\sum_j\rho_j^2)^n-(\sum_{j\ne i}\rho_j^2)^n=1-(1-\rho_i^2)^n$. The first-order index collects $\alpha=n\,e_i$. Since $g(W)$ is not constant, some $\gamma_n$ with $n\ge1$ is non-zero, which gives strict monotonicity.
+
+(ii) If $\rho_i=0$ then $\rho_j=0$ and both informations vanish. Otherwise let $r=\rho_j/\rho_i\in[-1,1]$ and $Z'=rZ_i+\sqrt{1-r^2}\,\xi$ with $\xi\sim N(0,1)$ independent of everything else. Then $(Z',W)$ is bivariate normal with unit variances and correlation $r\rho_i=\rho_j$, so $(Z',Y)$ has the law of $(Z_j,Y)$. As $Z'$ is obtained from $Z_i$ through a kernel that does not involve $Y$, the data-processing inequality (Proposition~\ref{prop:phi}(iii)) gives $I_f(Z_j;Y)=I_f(Z';Y)\le I_f(Z_i;Y)$, and $I_f$ is invariant under the bijection $\NPhi$. (iii) combines (i) and (ii).
+\end{proof}
+
+\begin{remark}[the adjusted ersatz and rankings]\label{rem:psirank}
+$h_\lambda$ is not convex (it is concave where $e^{-\lambda t}\in(p_0,p_1)$), so $\Psi_\lambda$ is not an $f$-divergence and Theorem~\ref{thm:singleindex}(ii) does not apply to it. Indeed $\Psi_\lambda$ violates the data-processing inequality. Let $C$ have, on the $4\times4$ grid of equal squares, the piecewise constant density with rows (indexed by $u$) $(0.1,0.3,1.8,1.8)$, $(0.3,0.1,1.8,1.8)$, $(1.8,1.8,0.2,0.2)$ and $(1.8,1.8,0.2,0.2)$. Averaging the first two rows, which is a Markov kernel acting on $X_i$ only, raises $\Psi_1$ from $0.3902$ to $0.3931$, while $\delta$ stays at $0.400$ and $\Phi_1$ decreases from $0.4930$ to $0.4920$. $\Psi_\lambda$ is invariant under strictly increasing transformations of $X_i$ and of $Y$, and hence copula-based in the sense of \citet[Table~1]{plischke2019}, but it is not one of their niveau~3 measures, which vanish if and only if $C=\Pi$ (their Theorem~13): $\Psi_\lambda(\Pi)=\kappa_\lambda$, and Proposition~\ref{prop:psi}(ii) and (iii) give the corresponding property relative to $\kappa_\lambda$. Two facts remain.
+\begin{enumerate}[label=(\alph*)]
+\item By Proposition~\ref{prop:psi}(iv), for $\lambda\in[1/2,1]$, if $\delta_i-\delta_j>\varepsilon_\lambda+\kappa_\lambda$ ($0.18711$ for $\lambda=1$) then $\Psi_\lambda(C_i)>\Psi_\lambda(C_j)$. Every law of the density values $c$ (under $\Pi$) with mean at most one is the law of a copula: a circulant absolutely continuous part, as in the proof of Proposition~\ref{prop:psi}(iii), plus a singular part spread uniformly on the diagonal, that is, a multiple of the copula $M$ of $(U,U)$. The smallest margin that guarantees agreement is therefore the value of a linear programme over two such laws. Solved with density values on a grid of step $5\cdot10^{-4}$ on $[0,3]$, and coarser up to $30$, it is $0.1763$ for $\lambda=1$ and $0.1627$ for $\lambda=512/529$. At $\lambda=1$ it is attained by the copula $C_a$ of Proposition~\ref{prop:phidelta} against $w\,\Pi+(1-w)\,M$, where $w=0.603835$ solves $h_1'(w)=-(1-\kappa_1)$ and $a^2=(h_1(w)-\kappa_1)/(1-\kappa_1)=0.219831$ (40-digit arithmetic). Their values of $\delta$, $a^2$ and $1-w$, differ by $0.176334$, and their values of $\Psi_1$ coincide ($0.256563$). For a strict reversal, $C_a$ with $a^2=0.22$ has $\delta=0.22$ and $\Psi_1=0.2567$, while $0.61\,\Pi+0.39\,M$ has $\delta=0.39$ and $\Psi_1=0.2507$; at $N=2^{14}$ the adjusted ersatz gives $0.2505$ and $0.2410$ (means of 20 replicates). The set of attainable pairs $\big(\delta(C_j)-\delta(C_i),\,\Psi_\lambda(C_i)-\Psi_\lambda(C_j)\big)$ is convex and contains pairs with equal $\delta$ and either order of $\Psi_\lambda$, so reversals occur for every difference of $\delta$ below the sharp margin.
+\item Numerically, $\Psi_1(C_\rho)$ is strictly increasing in $|\rho|$ for Gaussian copulas (240 values of $\rho\in[0,0.999]$; Section~\ref{sec:verification}). Hence the adjusted ersatz ranks the inputs as $T_i$ does in single-index models with strictly monotone $g$, for which $(X_i,Y)$ has a Gaussian copula.
+\end{enumerate}
+Outside single-index models the rankings by $T_i$ and $\delta_i$ can differ. For the Ishigami function $T_1>T_2$ but $\delta_2>\delta_1$, and the adjusted ersatz follows $\delta$ (main text, Section~3.2).
+\end{remark}
+
+\section{Designs other than simple random sampling}\label{sec:designs}
+
+Theorem~\ref{thm:limits} is proved for SRS. When $Y$ depends only on other inputs ($T_i=0$), its conclusion extends to plain Latin hypercube sampling (LHS). For maximin LHS and for randomised quasi-Monte Carlo designs we report simulation evidence only (Table~\ref{tab:null}); neither Theorem~\ref{thm:limits} nor Proposition~\ref{prop:lhs} covers them. As in the main text, a maximin LHS is the Latin hypercube with the largest minimum Euclidean distance between points among 20 independent random Latin hypercubes (\texttt{scipy.stats.qmc.LatinHypercube}), and scrambled Sobol' points are the first $N$ points of \texttt{scipy.stats.qmc.Sobol} with its default scrambling, a linear matrix scramble followed by a digital shift.
+
+\begin{proposition}[Latin hypercube sampling under independence]\label{prop:lhs}
+Let the column of $X_i$ be a Latin hypercube column: its points are $(k-\omega_k)/N$, $k=1,\dots,N$, with $\omega_1,\dots,\omega_N$ independent $U(0,1)$ variables, assigned to the runs in a uniformly random order. Let $Y$ be independent of this column, as is the case when $Y$ depends only on other columns of a plain Latin hypercube. If $s\to\infty$ and $N/s^2\to\lambda\in(0,\infty)$, then $\Sun\to e^{-\lambda}$ and $\Sadj\to h_\lambda(1)$ in probability.
+\end{proposition}
+
+\begin{proof}
+Condition on the $\omega_k$. Then every row $I_a$ of the grid contains a deterministic set of $N_a$ strata $((k-1)/N,k/N]$, with $|N_a-N/s|\le2$. The matching between strata and ranks is a uniformly random bijection, because the column is assigned to the runs in a uniformly random order, independent of the output and hence of its ranks, however ties are broken. Let $\mathcal C$ be a finite set of cells and $r_{ab}\ge0$ integers, $(a,b)\in\mathcal C$, with $|r|=\sum r_{ab}$, $r_{a\cdot}=\sum_br_{ab}$ and $r_{\cdot b}=\sum_ar_{ab}$. Counting ordered selections of distinct strata in each row and of distinct ranks in each block gives the factorial moments
+\[
+\E\Big[\prod_{(a,b)\in\mathcal C}(n_{ab})_{r_{ab}}\Big]=\prod_a(N_a)_{r_{a\cdot}}\prod_b(|B_b|)_{r_{\cdot b}}\,\frac{(N-|r|)!}{N!},
+\]
+where $(x)_r=x(x-1)\cdots(x-r+1)$. Since $N_a$ and $|B_b|$ are $N/s+O(1)$ uniformly, the right-hand side converges to $\lambda^{|r|}$ uniformly over the positions of the cells, and $\lambda^{|r|}$ is the factorial moment of independent Poisson$(\lambda)$ variables. As the Poisson law is determined by its moments, the counts of any bounded set of cells converge jointly to independent Poisson$(\lambda)$ variables. The convergence is uniform in the positions of the cells: otherwise a sequence of positions along which it fails would have factorial moments converging to $\lambda^{|r|}$, hence counts converging to the Poisson limit, a contradiction. Taking for $\mathcal C$ the $3\times3$ block of an interior cell gives $\E\Sadj\to h_\lambda(1)$. Taking two blocks gives $\Cov(\ind_c,\ind_{c'})\to0$ uniformly over pairs of interior cells with disjoint blocks, where $\ind_c$ indicates that cell $c$ is empty after the fill. Boundary cells and pairs with intersecting blocks are fractions $O(1/s)$ and $O(1/s^2)$ of the cells and of the pairs, so $\Var\Sadj\to0$, and Chebyshev's inequality gives the claim. The argument for $\Sun$ is the same with single cells.
+\end{proof}
+
+The null law of plain LHS does not depend on the model but differs from that of SRS at finite $N$; simulated, its mean and its probability of exceeding $0.05$ are $0.045$ and $0.34$ at $N=512$, and $0.044$ and $0.12$ at $N=4096$, within $0.001$ (mean) and $0.02$ (probability) of the maximin values of Table~\ref{tab:null}(b). Proposition~\ref{prop:lhs} does not cover maximin LHS, in which the selection by distance couples the columns. In the simulations of Table~\ref{tab:null}, the values of maximin LHS under independence are below those of SRS at small $N$ and approach $\kappa_{\lambda_N}$ as $N$ grows.
+
+\emph{Scrambled Sobol' sequences.} The points of a scrambled digital net are individually uniform but jointly dependent \citep{owen1997,dick2010}, so Theorem~\ref{thm:limits} does not apply, and the value of the statistic under independence depends on the model. If $Y$ is a monotone function of a single other input $X_l$, the rank-transformed pairs $(X_i,Y)$ inherit the two-dimensional net structure of the projection $(X_i,X_l)$ and are far more regular than random points. For the first two coordinates of the sequence at $N=512$ (means of 200 replicates), the unfilled statistic is $0.25$ instead of $0.37$, and the adjusted ersatz is $0.0004$ instead of $0.054$; for coordinates 3 and 5 the values are $0.34$ and $0.022$. If $Y$ depends on many inputs, the values approach those of SRS as $N$ grows (Table~\ref{tab:null}: for the sum of five inputs, $0.033$ against $0.054$ at $N=512$, $0.044$ against $0.047$ at $N=4096$). Conversely, two-dimensional projections of digital sequences with large $t$-values contain regular patterns of empty cells, which can be mistaken for structure in a scatterplot. Such patterns are a property of the design, not evidence of interactions.
+
+\section{Null distribution and the three thresholds}\label{sec:null}
+
+Table~\ref{tab:null} reports the distribution of $\Sadj$ for an input independent of the output. Under SRS this distribution depends only on $N$ and $s$, because the input values are then independent and identically distributed, independently of the output, so panel~(a) applies to every model. Under plain LHS it is also free of the model but differs at finite $N$ (Section~\ref{sec:designs}). Under scrambled Sobol' sequences it depends on the model, and we report the case in which $Y$ is the sum of five other inputs. At $N=512$ ($s=23$) the SRS values have mean $0.0536$ and standard deviation $0.0155$ (rounded to three decimals in Table~\ref{tab:null}), with $95\%$ and $99\%$ quantiles $0.081$ and $0.093$, and an independent input exceeds $\theta=0.01$, $0.05$ and $0.10$ with probabilities $1.000$, $0.566$ and $0.004$.
+
+The three thresholds used in the main text therefore have a precise meaning for the adjusted ersatz under SRS. At $N=512$ the threshold $\theta=0.01$ lies $2.8$ standard deviations below the mean under independence, and an input independent of the output exceeded it in $9998$ of the $10{,}000$ simulated samples. The threshold $\theta=0.05$ lies $0.23$ standard deviations below the mean and was exceeded in $56.6\%$ of them. This share oscillates with $\lambda_N=N/\lceil\sqrt N\rceil^2$ ($0.35$ at $N=1024$, $0.71$ at $N=2048$), because $0.05$ lies between $\kappa_1=0.047$ and $\kappa_{0.968}=0.055$. The threshold $\theta=0.10$ lies $3.0$ standard deviations above the mean, beyond the $99\%$ quantile, and was exceeded in $0.37\%$ of the samples. Under the Sobol' design the values are lower and depend on the model: at $N=512$, for the sum of five inputs, the mean is $0.033$ and an independent input exceeds $0.05$ with probability $0.095$. A threshold calibrated on the statistic's own scale is an upper quantile of its null distribution. Under SRS this quantile depends only on $N$ and can be read from Table~\ref{tab:null} or simulated once; for data drawn by SRS or plain LHS, permuting the output gives the null distribution of the design at hand.
+
+\begin{table}[h]
+\centering\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{@{}rrrrccccccc@{}}
+\multicolumn{11}{@{}l}{(a) Simple random sampling, $10{,}000$ replicates; valid for every model}\\
+\toprule
+$N$ & $s$ & $\lambda_N$ & $\kappa_{\lambda_N}$ & mean & sd & $q_{0.95}$ & $q_{0.99}$ & $\Prob(\hat S>0.01)$ & $\Prob(\hat S>0.05)$ & $\Prob(\hat S>0.10)$\\
+\midrule
+32 & 6 & 0.889 & 0.079 & 0.066 & 0.062 & 0.194 & 0.250 & 0.751 & 0.572 & 0.268\\
+64 & 8 & 1.000 & 0.047 & 0.044 & 0.039 & 0.125 & 0.156 & 0.810 & 0.325 & 0.086\\
+128 & 12 & 0.889 & 0.079 & 0.073 & 0.033 & 0.132 & 0.160 & 0.989 & 0.718 & 0.198\\
+256 & 16 & 1.000 & 0.047 & 0.046 & 0.020 & 0.082 & 0.102 & 0.982 & 0.412 & 0.011\\
+512 & 23 & 0.968 & 0.055 & 0.054 & 0.015 & 0.081 & 0.093 & 1.000 & 0.566 & 0.004\\
+1024 & 32 & 1.000 & 0.047 & 0.047 & 0.010 & 0.064 & 0.072 & 1.000 & 0.347 & 0.000\\
+2048 & 46 & 0.968 & 0.055 & 0.054 & 0.008 & 0.068 & 0.074 & 1.000 & 0.707 & 0.000\\
+4096 & 64 & 1.000 & 0.047 & 0.047 & 0.005 & 0.056 & 0.060 & 1.000 & 0.274 & 0.000\\
+\bottomrule
+\end{tabular}
+
+\bigskip
+\begin{tabular}{@{}rrcccccc@{}}
+\multicolumn{8}{@{}l}{(b) Maximin LHS and scrambled Sobol' sequences, $Y$ the sum of five other inputs}\\
+\toprule
+ & \multicolumn{4}{c}{Maximin LHS} & \multicolumn{3}{c}{Scrambled Sobol' ($10{,}000$ replicates)}\\
+\cmidrule(lr){2-5}\cmidrule(l){6-8}
+$N$ & replicates & mean & sd & $\Prob(\hat S>0.05)$ & mean & sd & $\Prob(\hat S>0.05)$\\
+\midrule
+32 & 2000 & 0.031 & 0.041 & 0.305 & 0.015 & 0.028 & 0.141\\
+64 & 2000 & 0.023 & 0.028 & 0.131 & 0.011 & 0.018 & 0.032\\
+128 & 2000 & 0.053 & 0.029 & 0.460 & 0.030 & 0.021 & 0.145\\
+256 & 2000 & 0.034 & 0.018 & 0.190 & 0.022 & 0.014 & 0.043\\
+512 & 2000 & 0.045 & 0.014 & 0.334 & 0.033 & 0.013 & 0.095\\
+1024 & 2000 & 0.040 & 0.009 & 0.144 & 0.032 & 0.009 & 0.034\\
+2048 & 500 & 0.049 & 0.008 & 0.456 & 0.044 & 0.008 & 0.237\\
+4096 & 300 & 0.044 & 0.006 & 0.133 & 0.044 & 0.007 & 0.194\\
+\bottomrule
+\end{tabular}
+\caption{Adjusted ersatz $\hat S=\Sadj$ of an input independent of the output (Monte Carlo simulation). The column $\kappa_{\lambda_N}=h_{\lambda_N}(1)$ is the interior-cell limit; the oscillation with $N$ follows $\lambda_N=N/\lceil\sqrt N\rceil^2$. Bootstrap standard errors are at most $0.0006$ for the means, $0.009$ for the quantiles and $0.005$ for the probabilities of panel (a) and of the Sobol' columns, and at most $0.001$ for the means and $0.023$ for the probabilities of the maximin LHS columns. Maximin LHS: the best of 20 random Latin hypercubes by minimum distance between points (Section~\ref{sec:designs}); replicate $r$ at sample size $N$ uses the seed $97000N+r$.}
+\label{tab:null}
+\end{table}
+
+\section{Numerical verification of the limits}\label{sec:verification}
+
+Table~\ref{tab:gauss} compares the population functionals with simulated values at $N=2^{16}$ (SRS, five replicates) for Gaussian copulas. In normal-score coordinates rotated by $45^\circ$, $s'=(x+y)/\sqrt2$ and $d'=(x-y)/\sqrt2$, the Gaussian copula density is $c_\rho=(1-\rho^2)^{-1/2}\exp\{\rho s'^2/(2(1+\rho))-\rho d'^2/(2(1-\rho))\}$. The functionals were computed by Gauss--Legendre quadrature in these coordinates, with the inner rule restricted to the band in which $c_\rho$ is not negligible, and $\delta$ by the formula $\delta=\E_X\TV\big(N(\rho X,1-\rho^2),N(0,1)\big)$ with one-dimensional adaptive quadrature. Monte Carlo integration with $10^7$ draws agrees to within $2\cdot10^{-4}$. A tensor Gauss--Hermite rule is not accurate enough for $\rho\ge0.99$, where the density concentrates near the diagonal, nor for $\delta$, whose integrand has a kink. The identity of Proposition~\ref{prop:histdelta} was checked to hold exactly in every replicate.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}rccccc@{}}
+\toprule
+$\rho$ & $\Phi_1(C_\rho)$ & $\Sun$ & $\Psi_1(C_\rho)$ & $\Sadj$ & $\delta(C_\rho)$\\
+\midrule
+0.00 & 0.3679 & 0.3676 & 0.0471 & 0.0481 & 0.0000\\
+0.30 & 0.3842 & 0.3833 & 0.0904 & 0.0905 & 0.1010\\
+0.60 & 0.4371 & 0.4364 & 0.2143 & 0.2131 & 0.2367\\
+0.90 & 0.5945 & 0.5929 & 0.5013 & 0.4991 & 0.5149\\
+0.99 & 0.8180 & 0.8176 & 0.7977 & 0.7967 & 0.8015\\
+\bottomrule
+\end{tabular}
+\caption{Gaussian copulas: limits of Theorem~\ref{thm:limits}, simulated statistics at $N=2^{16}$, and Borgonovo's $\delta$.}
+\label{tab:gauss}
+\end{table}
+
+\bibliographystyle{elsarticle-harv}
+\bibliography{smA_theory}
+
+\end{document}
