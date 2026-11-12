@@ -1,9 +1,18 @@
 rm(list = ls())
 
+# Original R implementation of the Becker-ensemble study, kept for provenance.
+# The results of the paper are produced by the Python code in src/. Run this
+# script from the repository root or from the folder R/.
+# Corrections in version 2.0.0 (see CHANGELOG.md): the function files are
+# sourced from the folder of this script (the folder "functions" does not
+# exist in the repository); logitnorm, needed by random_distributions_fun()
+# for phi = 7 and 8, is loaded; update_matrix() is defined in
+# discrepancy_fun.R; mclapply() uses at least one core, and one on Windows.
+
 #   PRELIMINARY FUNCTIONS ######################################################
 
 sensobol::load_packages(c("data.table", "tidyverse", "sensobol", "benchmarkme", 
-                          "here", "Rfast", "parallel", "scales", "qrng"))
+                          "Rfast", "parallel", "scales", "qrng", "logitnorm"))
 
 sobol_mat <- function(matrices = c("A", "B", "AB"),
                       N, params, order = "first",
@@ -169,39 +178,7 @@ scrambled_sobol <- function(matrices, A, B, C, order) {
   
 }
 
-update_matrix <- function(M) {
-  
-  nr <- nrow(M)
-  nc <- ncol(M)
-  M_new <- M
-  
-  for (i in 1:nr) {
-    for (j in 1:nc) {
-      
-      if (M[i, j] == 0) {
-        
-        # limiti dei vicini
-        r_min <- max(1, i - 1)
-        r_max <- min(nr, i + 1)
-        c_min <- max(1, j - 1)
-        c_max <- min(nc, j + 1)
-        
-        neighbors <- M[r_min:r_max, c_min:c_max]
-        
-        # rimuove la cella centrale
-        neighbors <- neighbors[-which(row(neighbors) == i - r_min + 1 &
-                                        col(neighbors) == j - c_min + 1)]
-        
-        if (mean(neighbors) >= 0.5) {
-          M_new[i, j] <- 1
-        }
-      }
-    }
-  }
-  
-  return(M_new)
-  
-}
+# update_matrix() (Moore fill) is defined in discrepancy_fun.R
 
 # Create custom theme -----------------------------------------------------------
 
@@ -236,10 +213,13 @@ selected.palette <- "Darjeeling1"
 
 # SOURCE ALL R FUNCTIONS NEEDED FOR THE STUDY ###################################
 
-# Source all .R files in the "functions" folder --------------------------------
+# Source the function files, which sit next to this script --------------------
 
-r_functions <- list.files(path = here("functions"), pattern = "\\.R$", full.names = TRUE)
-lapply(r_functions, source)
+r_dir <- if (file.exists(file.path("R", "discrepancy_fun.R"))) "R" else "."
+r_functions <- file.path(r_dir, c("discrepancy_fun.R", "jansen_fun.R",
+                                  "random_distributions_fun.R",
+                                  "savage_scores_fun.R", "triggers_fun.R"))
+invisible(lapply(r_functions, source))
 
 # CREATE SAMPLE MATRIX #########################################################
 
@@ -274,7 +254,8 @@ y <- mclapply(1:nrow(final.mat), function(i) {
             cost.discrepancy = final.mat[i, "cost.discrepancy"], 
             phi = final.mat[i, "phi"], 
             k = final.mat[i, "k"])}, 
-  mc.cores = floor(detectCores() * 0.75))
+  mc.cores = if (.Platform$OS.type == "windows") 1 else
+    max(1, floor(detectCores() * 0.75)))
 
 # ARRANGE OUTPUT ###############################################################
 

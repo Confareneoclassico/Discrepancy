@@ -1,16 +1,11 @@
-numpy>=1.26
-pandas>=2.0
+# Python 3.9 or later. Older interpreters (e.g. Python 3.7) cannot install
+# numpy>=1.24 and pip stops with "Could not find a version that satisfies the
+# requirement numpy>=1.24"; see README.md, Installation.
+# Minimum versions, tested with Python 3.9; the exact versions used for the
+# results of the paper are in requirements-lock.txt.
+numpy>=1.24
 scipy>=1.11
-matplotlib>=3.7,<3.9    # boxplot 'labels=' kwarg is deprecated (not removed) from 3.9 onward;
-                        # code uses 'labels=' for backward compatibility down to very old
-                        # matplotlib releases. Tested against matplotlib 3.10.8 (warns, does not fail).
-chaospy>=4.3
-
-# Tested combination (this repository, June 2026):
-#   numpy 2.4.4, pandas 3.0.2, scipy 1.17.1, matplotlib 3.10.8, chaospy 4.3.21
-# on Python 3.12.
-#
-# Multiprocessing note: src/discrepancy.py uses multiprocessing.Pool for the
-# Becker metafunction study (~512 simulations). No extra package is required,
-# but on Windows the __main__ guard at the bottom of the script is required
-# for the pool workers to import correctly -- it is already present.
+pandas>=2.0
+matplotlib>=3.7
+scikit-learn>=1.3   # only for the gradient-boosting surrogate in hymod_reference.py
+sympy>=1.12         # only for theory_checks.py (Supplementary Material A)
