@@ -2,10 +2,24 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "An Adjusted Ersatz Discrepancy for Global Sensitivity Analysis: Theory and Benchmarks"
 version: 2.0.0
-date-released: 2026-11-01
+date-released: 2026-11-12
 license: MIT
 repository-code: "https://github.com/Confareneoclassico/Discrepancy"
-doi: 10.5281/zenodo.XXXXXXX
+doi: 10.5281/zenodo.24173619
+type: software
+abstract: >-
+  Python implementation of the adjusted ersatz discrepancy, a given-data
+  screening statistic that consistently estimates a moment-independent
+  sensitivity measure close to Borgonovo's delta, with the benchmark
+  experiments, the HYMOD sample, the numerical checks of the theory and the
+  supplementary material of the paper "An Adjusted Ersatz Discrepancy for
+  Global Sensitivity Analysis: Theory and Benchmarks".
+keywords:
+  - global sensitivity analysis
+  - given-data estimation
+  - discrepancy
+  - moment-independent sensitivity measures
+  - screening
 authors:
   - family-names: "Lo Piano"
     given-names: "Samuele"

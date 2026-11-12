@@ -22,5 +22,5 @@ The design is an Owen-scrambled Sobol' sequence (`qrng::sobol`,
 
 The code recovers the uniform [0, 1] design from `hydro.csv` and reads the
 output from `hydro2.csv`. Version 1.x of the code and the first version of the
-paper labelled x4 as Rq and x5 as Rs; the ranges show that x4 is Rs and x5 is
-Rq.
+paper labelled x4 as Rq and x5 as Rs, but the ranges show that x4 is Rs and
+x5 is Rq.
