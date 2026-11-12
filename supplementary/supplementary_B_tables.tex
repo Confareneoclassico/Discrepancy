@@ -48,11 +48,12 @@
 
 All computations use the Python module \texttt{discrepancy.py} (version~2.0), which implements the estimators, the test functions and the designs, with NumPy, SciPy and, for the gradient-boosting surrogate of HYMOD only, scikit-learn. The scripts of the repository produce the results as follows:
 \begin{itemize}\setlength{\itemsep}{0pt}
-\item \texttt{reference\_indices.py}, \texttt{delta\_reference.py} and \texttt{hymod\_reference.py}: reference values of $T_i$ and $\delta_i$ (Table~\ref{tab:refs});
-\item \texttt{experiments.py}: benchmark, convergence, Becker and HYMOD experiments, and the sensitivity analysis of the method;
-\item \texttt{null\_distribution.py}: distribution of the adjusted ersatz under independence (Supplementary Material~A, Table~2);
-\item \texttt{theory\_checks.py}: numerical steps of Supplementary Material~A;
-\item \texttt{summaries.py}, \texttt{make\_tables.py} and \texttt{make\_figures.py}: tables and figures.
+\item \texttt{reference\_indices.py}, \texttt{delta\_reference.py} and \texttt{hymod\_reference.py}: reference values of $T_i$ and $\delta_i$ (Table~\ref{tab:refs})
+\item \texttt{experiments.py}: benchmark, convergence, Becker and HYMOD experiments, and the sensitivity analysis of the method
+\item \texttt{null\_distribution.py}: distribution of the adjusted ersatz under independence (Supplementary Material~A, Table~2)
+\item \texttt{theory\_checks.py}: numerical steps of Supplementary Material~A
+\item \texttt{screening\_check.py}: screening errors and the theory (Section~B.7)
+\item \texttt{summaries.py}, \texttt{make\_tables.py} and \texttt{make\_figures.py}: tables and figures
 \end{itemize}
 Every random stream is seeded, so all tables and figures are reproducible.
 
@@ -461,7 +462,7 @@ The script \path{screening_check.py} of the repository compares the screening er
 
 \paragraph{Ranking.} The 23 pairs of benchmark inputs whose $\delta_i$ differ by more than $\varepsilon_\lambda+\kappa_\lambda=0.1755$ at $\lambda=512/529$ are ranked as by $\delta$ in all 100 replicates at $N=512$ under SRS and maximin LHS, and in 99.8\% of them under the Sobol' design. The 19 pairs whose $\delta_i$ differ by more than $0.19$, the margin for $\lambda=1$ quoted in the main text, are ranked as by $\delta$ in every replicate of the three designs.
 
-\paragraph{Designs.} At $N=512$ the maximin LHS and Sobol' designs lower the statistic of influential and non-influential inputs alike, relative to SRS: by $0.001$ to $0.014$ under maximin LHS, and by up to $0.058$ under the Sobol' design (median over the inputs of a function from $0.014$ to $0.040$; only $x_8$ of the Sobol' $G$ function is not lowered). The Sobol' design lowers it most for the functions dominated by few inputs (Bratley et al.\ 1992, Multiverse, Sobol' $G$), as for the first coordinates of the sequence (Supplementary Material A, Section~8). This causes the type~II errors of the Bratley et al.\ (1992) function in Table~\ref{tab:scr_sobol}: the means of $x_2$ and $x_3$ are $0.083$ and $0.026$ under the Sobol' design, against $0.141$ and $0.077$ under SRS. Beyond independence under plain LHS (Supplementary Material A, Proposition~8.1), the theory does not cover these designs.
+\paragraph{Designs.} At $N=512$ the maximin LHS and Sobol' designs lower the statistic of influential and non-influential inputs alike, relative to SRS: by $0.001$ to $0.014$ under maximin LHS, and by up to $0.058$ under the Sobol' design, with medians over the inputs of a function from $0.014$ to $0.040$. Only $x_8$ of the Sobol' $G$ function is not lowered. The Sobol' design lowers it most for the functions dominated by few inputs (Bratley et al.\ 1992, Multiverse, Sobol' $G$), as for the first coordinates of the sequence (Supplementary Material A, Section~8). This causes the type~II errors of the Bratley et al.\ (1992) function in Table~\ref{tab:scr_sobol}: the means of $x_2$ and $x_3$ are $0.083$ and $0.026$ under the Sobol' design, against $0.141$ and $0.077$ under SRS. Beyond independence under plain LHS (Supplementary Material A, Proposition~8.1), the theory does not cover these designs.
 
 \begin{table}[H]\centering\footnotesize
 \begin{tabular}{@{}lcccc@{}}\toprule
@@ -489,7 +490,7 @@ $N$ & $N/s^2$ & Bratley et al. (1992) & Oakley--O'Hagan & Sobol' $G$ & Independe
 4096 & 1.000 & 0.34 & 0.64 & 0.47 & 0.27 \\
 8192 & 0.989 & 0.50 & 0.94 & 0.59 & -- \\
 \bottomrule\end{tabular}
-\caption{Screening errors of the adjusted ersatz and the theory. (a) Inputs of the Becker ensemble with $T_i=0$ (345 for each design): share of the statistic above $\theta$, and its mean, with the same quantities for an input independent of the output under SRS at the same sample sizes (3000 replicates at each $N$). Standard errors of the observed shares: at most $0.026$. (b) Type~I error at $\theta=0.05$ in the convergence study under SRS (mean over 20 replicates), and probability that an input independent of the output exceeds $0.05$ (Supplementary Material A, Table~2; 10{,}000 replicates).}
+\caption{Screening errors of the adjusted ersatz and the theory. (a) Inputs of the Becker ensemble with $T_i=0$ (345 for each design): share of the statistic above $\theta$, and its mean, with the same quantities for an input independent of the output under SRS at the same sample sizes (3000 replicates at each $N$). Standard errors of the observed shares: at most $0.026$. (b) Type~I error at $\theta=0.05$ in the convergence study under SRS (mean over 20 replicates), and probability that an input independent of the output exceeds $0.05$ (Supplementary Material A, Table~2, with 10{,}000 replicates).}
 \label{tab:scr_theory}
 \end{table}
 
