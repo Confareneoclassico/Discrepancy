@@ -1,16 +1,14 @@
 # An Adjusted Ersatz Discrepancy for Global Sensitivity Analysis: Theory and Benchmarks
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.NNNNNNN.svg)](https://doi.org/10.5281/zenodo.NNNNNNN)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24173619.svg)](https://doi.org/10.5281/zenodo.24173619)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
-<!-- ACTION: replace XXXXXXX above (twice) and in CITATION.cff with the Zenodo DOI of release 2.0.0. -->
 
 Code, data and supplementary material for
 
 > Lo Piano, S., A. Lachi, R. Sheikholeslami, A. Puy, P. T. Roy,
 > A. Saltelli, **"An Adjusted Ersatz Discrepancy for Global Sensitivity
 > Analysis: Theory and Benchmarks"**, *Environmental Modelling and Software*
-> (revised version, 2026; submitted as "Improving Discrepancy Measures for
+> (revised version, 2026, submitted as "Improving Discrepancy Measures for
 > Global Sensitivity Analysis").
 
 The paper revisits the S-ersatz of
@@ -27,7 +25,7 @@ The adjusted ersatz is compared at equal sample cost with a degree-adaptive
 polynomial chaos expansion (PCE), PCE-based Shapley effects and the
 given-data PAWN index, against total-order Sobol' indices and against delta.
 
-Version 2.0 corrects several errors of version 1.x; see [CHANGELOG.md](CHANGELOG.md).
+Version 2.0 corrects several errors of version 1.x, listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Repository structure
 
@@ -53,7 +51,7 @@ Version 2.0 corrects several errors of version 1.x; see [CHANGELOG.md](CHANGELOG
 │   ├── hydro.csv             # HYMOD inputs (Cmax, bexp, alpha, Rs, Rq)
 │   ├── hydro2.csv            # HYMOD inputs as run + NSE output
 │   └── README.md
-├── R/                        # original R implementation (provenance; fixes in CHANGELOG)
+├── R/                        # original R implementation (provenance, fixes in CHANGELOG)
 ├── supplementary/            # Supplementary Materials A and B (PDF and LaTeX)
 ├── examples/minimal_example.py
 ├── requirements.txt          # minimum versions (Python 3.9 or later)
@@ -103,7 +101,7 @@ within 1e-15.
 
 ## Reproducing the results
 
-Run from `src/`; every random stream is seeded. The folder `src/results/`
+Run from `src/`. Every random stream is seeded. The folder `src/results/`
 already contains the raw results used in the paper, so the last line alone
 regenerates all tables and figures.
 
@@ -113,8 +111,8 @@ python experiments.py benchmarks     # N = 512, 100 replicates, 3 designs  (~2 m
 python experiments.py convergence    # N = 2^4..2^13, 20 replicates        (~15 min)
 python experiments.py hymod          # HYMOD sample, blocks and subsets    (~5 min)
 python experiments.py becker         # 512 Becker configurations, 3 designs (~10 min)
-python experiments.py sos            # sensitivity of the sensitivity analysis: S_i and T_i (~1.5 h; needs becker)
-python reference_indices.py          # checks refs.json (~1 min; --seeds: 14 seeds, ~5 min)
+python experiments.py sos            # sensitivity of the sensitivity analysis: S_i and T_i (~1.5 h, needs becker)
+python reference_indices.py          # checks refs.json (~1 min, ~5 min with --seeds for 14 seeds)
 python delta_reference.py            # delta references (~5 min)
 python hymod_reference.py            # HYMOD references (~3 min)
 python null_distribution.py          # null distribution, SM A Table 2 (~8 min)
@@ -148,7 +146,7 @@ simple random sampling depends only on N (Supplementary Material A, Table 2).
 
 `data/hydro.csv` and `data/hydro2.csv` contain 50,000 runs of the HYMOD model
 for the Leaf River catchment on an Owen-scrambled Sobol' design mapped to
-uniform distributions; the output is the Nash-Sutcliffe efficiency. See
+uniform distributions. The output is the Nash-Sutcliffe efficiency. See
 `data/README.md`.
 
 ## Citing
@@ -164,7 +162,7 @@ Until the article is published, please cite the archived software release:
   year      = {2026},
   version   = {2.0.0},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.NNNNNNN},
+  doi       = {10.5281/zenodo.24173619},
   url       = {https://github.com/Confareneoclassico/Discrepancy}
 }
 ```
@@ -175,4 +173,4 @@ MIT, see [LICENSE](LICENSE).
 
 ## Contact
 
-a.lachi@unilink.it (corresponding author); samuele.lo.piano@pg.edu.pl
+a.lachi@unilink.it (corresponding author) and samuele.lo.piano@pg.edu.pl

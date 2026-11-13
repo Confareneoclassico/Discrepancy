@@ -9,7 +9,7 @@ same grid conventions (`ceiling` cell indices, ranks with
 
 Version 2.0.0 corrects four errors in the functions (inputs equal to 0,
 floating-point rank columns, constant outputs, Savage scores with ties) and
-the paths of the two scripts; see `../CHANGELOG.md`. With these corrections,
+the paths of the two scripts, as listed in `../CHANGELOG.md`. With these corrections,
 `s_ersatz`, `s_ersatz_adj`, `jansen_fun` and `savage_scores_fun` give the
 same values as the Python package on random test samples.
 
@@ -19,6 +19,6 @@ same values as the Python package on random test samples.
   (needs the R packages sensobol, data.table, tidyverse, Rfast, qrng,
   logitnorm and scales). Run from the repository root or from `R/`.
 - `discrepancy.R`: exploratory script of the first version (benchmark
-  functions, HYMOD, convergence plots). Run from `R/`; it writes to
+  functions, HYMOD, convergence plots). Run from `R/`. It writes to
   `R/output/` and needs `AE_df.rds`, the reference indices of the first
   version, which is not part of the repository.
